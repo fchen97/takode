@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom";
 import {
   SESSION_NAVIGATION_PROJECTION,
@@ -18,6 +18,12 @@ const { mockApi } = vi.hoisted(() => ({
     getSessionSystemPrompt: vi.fn().mockResolvedValue({ prompt: null }),
     getSessionInstructionContent: vi.fn(),
     getAutoApprovalConfigForPath: vi.fn().mockResolvedValue({ config: null }),
+    getWorkspaceTokenUsageByModel: vi.fn().mockResolvedValue({
+      models: [],
+      totalTokens: 0,
+      history: { ranges: [], limited: false, limitedReasons: [] },
+      generatedAt: 1,
+    }),
     getHerdDiagnostics: vi.fn().mockResolvedValue({
       herdDispatcher: { pendingEventCount: 0, eventHistory: [] },
       isGenerating: false,
@@ -200,6 +206,7 @@ import {
   CodexRateLimitsSection,
   CodexTokenDetailsSection,
   ClaudeMdCollapsible,
+  WorkspaceTokenUsageByModelView,
 } from "./TaskPanel.js";
 
 function instructionSnapshot(threadId: string) {
@@ -214,6 +221,17 @@ function instructionSnapshot(threadId: string) {
   };
 }
 
+function emptyWorkspaceHistory() {
+  return {
+    ranges: [
+      { id: "week" as const, label: "Past week", days: 7, granularity: "day" as const, totalTokens: 0, buckets: [] },
+      { id: "month" as const, label: "Past month", days: 30, granularity: "day" as const, totalTokens: 0, buckets: [] },
+    ],
+    limited: false,
+    limitedReasons: [],
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
@@ -221,6 +239,12 @@ beforeEach(() => {
   mockApi.getSessionInfo.mockResolvedValue({ sessionId: "s1", state: "connected", cwd: "/repo", createdAt: 1 });
   mockApi.getSessionSystemPrompt.mockResolvedValue({ prompt: null });
   mockApi.getAutoApprovalConfigForPath.mockResolvedValue({ config: null });
+  mockApi.getWorkspaceTokenUsageByModel.mockResolvedValue({
+    models: [],
+    totalTokens: 0,
+    history: emptyWorkspaceHistory(),
+    generatedAt: 1,
+  });
   resetStore();
 });
 
@@ -458,6 +482,44 @@ describe("TaskPanel", () => {
     expect(screen.getByTestId("mcp-section")).toBeInTheDocument();
     expect(screen.getByTestId("task-panel-content")).toHaveClass("overflow-y-auto");
     expect(container.querySelectorAll(".overflow-y-auto")).toHaveLength(1);
+  });
+
+  it("renders workspace token totals by model in the Usage section", async () => {
+    mockApi.getWorkspaceTokenUsageByModel.mockResolvedValue({
+      totalTokens: 1_234_000,
+      generatedAt: 1,
+      history: emptyWorkspaceHistory(),
+      models: [
+        {
+          model: "claude-sonnet-4-5-20250929",
+          totalTokens: 900_000,
+          inputTokens: 300_000,
+          outputTokens: 100_000,
+          cachedInputTokens: 500_000,
+          reasoningOutputTokens: 0,
+          sessionCount: 3,
+        },
+        {
+          model: "gpt-5.3-codex",
+          totalTokens: 334_000,
+          inputTokens: 120_000,
+          outputTokens: 40_000,
+          cachedInputTokens: 150_000,
+          reasoningOutputTokens: 24_000,
+          sessionCount: 2,
+          codexModelAttributionLimited: true,
+        },
+      ],
+    });
+
+    render(<TaskPanel sessionId="s1" />);
+
+    expect(await screen.findByText("Workspace Tokens")).toBeInTheDocument();
+    expect(screen.getByText("1.2M")).toBeInTheDocument();
+    expect(screen.getByText("claude-sonnet-4-5-20250929")).toBeInTheDocument();
+    expect(screen.getByText("gpt-5.3-codex")).toBeInTheDocument();
+    expect(screen.getByText("2 sessions")).toBeInTheDocument();
+    expect(screen.getByText("7D")).toBeInTheDocument();
   });
 
   it("renders the selected session claimed quest with verification, feedback, and owner details", () => {
@@ -1136,5 +1198,313 @@ describe("CodexTokenDetailsSection", () => {
     });
     render(<CodexTokenDetailsSection sessionId="s1" />);
     expect(screen.queryByText("Context")).not.toBeInTheDocument();
+  });
+});
+
+describe("WorkspaceTokenUsageByModelView", () => {
+  it("omits itself when there are no usable model rows", () => {
+    const { container } = render(
+      <WorkspaceTokenUsageByModelView
+        summary={{ models: [], totalTokens: 0, history: emptyWorkspaceHistory(), generatedAt: 1 }}
+      />,
+    );
+
+    expect(container.firstChild).toBeNull();
+  });
+
+  it("renders compact totals and token category breakdowns", () => {
+    // Rendering coverage for the server-shaped aggregate: the total is shown
+    // by model while category details remain available for double-counting review.
+    render(
+      <WorkspaceTokenUsageByModelView
+        summary={{
+          totalTokens: 1_050_000,
+          generatedAt: 1,
+          history: {
+            ranges: [
+              {
+                id: "week",
+                label: "Past week",
+                days: 7,
+                granularity: "day",
+                totalTokens: 70,
+                buckets: [
+                  { date: "2026-01-06", totalTokens: 0, models: [] },
+                  {
+                    date: "2026-01-07",
+                    totalTokens: 70,
+                    models: [{ model: "claude-sonnet", totalTokens: 70 }],
+                  },
+                ],
+              },
+              {
+                id: "month",
+                label: "Past month",
+                days: 30,
+                granularity: "day",
+                totalTokens: 130,
+                buckets: [
+                  {
+                    date: "2026-01-01",
+                    totalTokens: 130,
+                    models: [{ model: "claude-sonnet", totalTokens: 130 }],
+                  },
+                ],
+              },
+            ],
+            limited: false,
+            limitedReasons: [],
+          },
+          models: [
+            {
+              model: "claude-sonnet",
+              totalTokens: 1_050_000,
+              inputTokens: 300_000,
+              outputTokens: 50_000,
+              cachedInputTokens: 700_000,
+              reasoningOutputTokens: 0,
+              sessionCount: 4,
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.getByText("Workspace Tokens")).toBeInTheDocument();
+    expect(screen.getAllByText("1.1M")).toHaveLength(2);
+    expect(screen.getAllByText("claude-sonnet")).toHaveLength(3);
+    expect(screen.getByText("input 300.0k · output 50.0k · cached 700.0k")).toBeInTheDocument();
+    expect(screen.getByText("4 sessions")).toBeInTheDocument();
+    expect(screen.getAllByText("70").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByRole("button", { name: "2026-01-07: 70 tokens" })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByText("30D"));
+    expect(screen.getAllByText("130").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByRole("button", { name: "2026-01-01: 130 tokens" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("selects a histogram day and renders exact daily totals by model", () => {
+    render(
+      <WorkspaceTokenUsageByModelView
+        summary={{
+          totalTokens: 4_184_100,
+          generatedAt: 1,
+          history: {
+            ranges: [
+              {
+                id: "week",
+                label: "Past week",
+                days: 7,
+                granularity: "day",
+                totalTokens: 932_000,
+                buckets: [
+                  {
+                    date: "2026-01-02",
+                    totalTokens: 90_000,
+                    models: [{ model: "gpt-5.3-codex", totalTokens: 90_000 }],
+                  },
+                  {
+                    date: "2026-01-05",
+                    totalTokens: 284_000,
+                    models: [
+                      { model: "claude-sonnet-4-5-20250929", totalTokens: 194_000 },
+                      { model: "gpt-5.3-codex", totalTokens: 90_000 },
+                    ],
+                  },
+                  { date: "2026-01-06", totalTokens: 0, models: [] },
+                ],
+              },
+              { id: "month", label: "Past month", days: 30, granularity: "day", totalTokens: 0, buckets: [] },
+            ],
+            limited: false,
+            limitedReasons: [],
+          },
+          models: [
+            {
+              model: "claude-sonnet-4-5-20250929",
+              totalTokens: 2_650_400,
+              inputTokens: 1_010_000,
+              outputTokens: 240_400,
+              cachedInputTokens: 1_400_000,
+              reasoningOutputTokens: 0,
+              sessionCount: 7,
+            },
+            {
+              model: "gpt-5.3-codex",
+              totalTokens: 1_533_700,
+              inputTokens: 470_000,
+              outputTokens: 183_700,
+              cachedInputTokens: 780_000,
+              reasoningOutputTokens: 100_000,
+              sessionCount: 3,
+            },
+          ],
+        }}
+      />,
+    );
+
+    const jan5 = screen.getByRole("button", { name: "2026-01-05: 284.0k tokens" });
+    jan5.focus();
+    expect(jan5).toHaveFocus();
+    fireEvent.click(jan5);
+
+    expect(jan5).toHaveAttribute("aria-pressed", "true");
+    const selectedDay = screen.getByTestId("workspace-token-selected-day");
+    expect(within(selectedDay).getByText("2026-01-05")).toBeInTheDocument();
+    expect(within(selectedDay).getByText("284.0k")).toBeInTheDocument();
+    expect(within(selectedDay).getByText("claude-sonnet-4-5-20250929")).toBeInTheDocument();
+    expect(within(selectedDay).getByText("194.0k")).toBeInTheDocument();
+    expect(within(selectedDay).getByText("gpt-5.3-codex")).toBeInTheDocument();
+    expect(within(selectedDay).getByText("90.0k")).toBeInTheDocument();
+  });
+
+  it("shows a clear selected-day empty state for zero-token buckets", () => {
+    render(
+      <WorkspaceTokenUsageByModelView
+        summary={{
+          totalTokens: 100,
+          generatedAt: 1,
+          history: {
+            ranges: [
+              {
+                id: "week",
+                label: "Past week",
+                days: 7,
+                granularity: "day",
+                totalTokens: 100,
+                buckets: [
+                  { date: "2026-01-06", totalTokens: 100, models: [{ model: "opus 4.7", totalTokens: 100 }] },
+                  { date: "2026-01-07", totalTokens: 0, models: [] },
+                ],
+              },
+              { id: "month", label: "Past month", days: 30, granularity: "day", totalTokens: 0, buckets: [] },
+            ],
+            limited: false,
+            limitedReasons: [],
+          },
+          models: [
+            {
+              model: "opus 4.7",
+              totalTokens: 100,
+              inputTokens: 80,
+              outputTokens: 20,
+              cachedInputTokens: 0,
+              reasoningOutputTokens: 0,
+              sessionCount: 1,
+            },
+          ],
+        }}
+      />,
+    );
+
+    const zeroDay = screen.getByRole("button", { name: "2026-01-07: 0 tokens" });
+    fireEvent.click(zeroDay);
+
+    expect(zeroDay).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByText("No recorded daily tokens for this day.")).toBeInTheDocument();
+  });
+
+  it("keeps a real 30-day histogram pointer-selectable with fixed day targets", () => {
+    const monthBuckets = Array.from({ length: 30 }, (_, index) => {
+      const day = index + 1;
+      return {
+        date: `2026-01-${String(day).padStart(2, "0")}`,
+        totalTokens: day * 10,
+        models: [{ model: "opus 4.7", totalTokens: day * 10 }],
+      };
+    });
+
+    render(
+      <WorkspaceTokenUsageByModelView
+        summary={{
+          totalTokens: 4_650,
+          generatedAt: 1,
+          history: {
+            ranges: [
+              {
+                id: "week",
+                label: "Past week",
+                days: 7,
+                granularity: "day",
+                totalTokens: 300,
+                buckets: monthBuckets.slice(-7),
+              },
+              {
+                id: "month",
+                label: "Past month",
+                days: 30,
+                granularity: "day",
+                totalTokens: 4_650,
+                buckets: monthBuckets,
+              },
+            ],
+            limited: false,
+            limitedReasons: [],
+          },
+          models: [
+            {
+              model: "opus 4.7",
+              totalTokens: 4_650,
+              inputTokens: 4_000,
+              outputTokens: 650,
+              cachedInputTokens: 0,
+              reasoningOutputTokens: 0,
+              sessionCount: 2,
+            },
+          ],
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("30D"));
+
+    const histogram = screen.getByTestId("workspace-token-histogram-days");
+    expect(histogram).toHaveClass("overflow-x-auto");
+    expect(screen.getAllByRole("button", { name: /2026-01-\d\d: \d+ tokens/ })).toHaveLength(30);
+
+    const jan15 = screen.getByRole("button", { name: "2026-01-15: 150 tokens" });
+    expect(jan15).toHaveClass("w-6", "shrink-0");
+    expect(jan15).not.toHaveClass("flex-1");
+
+    fireEvent.click(jan15);
+
+    expect(jan15).toHaveAttribute("aria-pressed", "true");
+    const selectedDay = screen.getByTestId("workspace-token-selected-day");
+    expect(within(selectedDay).getByText("2026-01-15")).toBeInTheDocument();
+    expect(within(selectedDay).getAllByText("150").length).toBeGreaterThanOrEqual(2);
+    expect(within(selectedDay).getByText("opus 4.7")).toBeInTheDocument();
+  });
+
+  it("renders a limited-history state without fabricating histogram buckets", () => {
+    render(
+      <WorkspaceTokenUsageByModelView
+        summary={{
+          totalTokens: 120,
+          generatedAt: 1,
+          history: {
+            ranges: [
+              { id: "week", label: "Past week", days: 7, granularity: "day", totalTokens: 0, buckets: [] },
+              { id: "month", label: "Past month", days: 30, granularity: "day", totalTokens: 0, buckets: [] },
+            ],
+            limited: true,
+            limitedReasons: ["No timestamped token usage samples are available yet for daily buckets."],
+          },
+          models: [
+            {
+              model: "opus 4.7",
+              totalTokens: 120,
+              inputTokens: 100,
+              outputTokens: 20,
+              cachedInputTokens: 0,
+              reasoningOutputTokens: 0,
+              sessionCount: 1,
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(
+      screen.getByText("No timestamped token usage samples are available yet for daily buckets."),
+    ).toBeInTheDocument();
   });
 });

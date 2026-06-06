@@ -98,6 +98,7 @@ export function buildCodexTokenUsagePatch(params: Record<string, unknown>): Part
     if (typeof contextTokensUsed === "number" || typeof providerReportedTotalTokens === "number") {
       updates.codex_token_details = {
         ...(updates.codex_token_details ?? {
+          totalTokens: total?.totalTokens || 0,
           inputTokens: total?.inputTokens || 0,
           outputTokens: total?.outputTokens || 0,
           cachedInputTokens: total?.cachedInputTokens || 0,
@@ -122,6 +123,7 @@ export function buildCodexTokenUsagePatch(params: Record<string, unknown>): Part
       contextTokensUsed: updates.codex_token_details?.contextTokensUsed,
       displayContextTokensUsed: updates.codex_token_details?.displayContextTokensUsed,
       ...(providerReportedTotalTokens !== undefined ? { providerReportedTotalTokens } : {}),
+      totalTokens: total.totalTokens || 0,
       inputTokens: total.inputTokens || 0,
       outputTokens: total.outputTokens || 0,
       cachedInputTokens: total.cachedInputTokens || 0,

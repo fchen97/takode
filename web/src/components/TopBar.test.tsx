@@ -484,6 +484,7 @@ describe("TopBar", () => {
     resetStore({
       currentSessionId: "s1",
       sidebarOpen: false,
+      taskPanelOpen: false,
       sessionNames: new Map([["s1", "Main Session"]]),
       sessions: new Map([["s1", { cwd: "/repo" }]]),
       sdkSessions: [{ sessionId: "s1", createdAt: 40, cliConnected: true, state: "connected", name: "Main Session" }],
@@ -493,6 +494,7 @@ describe("TopBar", () => {
 
     expect(screen.getByText("Memory")).toBeInTheDocument();
     expect(screen.queryByText("Main Session")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open session panel" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByTitle("Toggle sidebar"));
     expect(storeState.setSidebarOpen).toHaveBeenCalledWith(true);
   });
@@ -729,6 +731,42 @@ describe("TopBar", () => {
     const diffButton = screen.getByRole("button", { name: "Show diffs" });
     expect(diffButton).toHaveAttribute("title", "Show diffs");
     expect(screen.queryByRole("button", { name: "Show leader diffs" })).not.toBeInTheDocument();
+  });
+
+  it("opens the current session panel from the top bar", () => {
+    window.location.hash = "#/session/s1";
+    resetStore({
+      currentSessionId: "s1",
+      taskPanelOpen: false,
+      sessions: new Map([["s1", { cwd: "/repo" }]]),
+      sdkSessions: [{ sessionId: "s1", createdAt: 1, name: "Main Session", cliConnected: true, state: "connected" }],
+    });
+
+    render(<TopBar />);
+
+    const panelButton = screen.getByRole("button", { name: "Open session panel" });
+    expect(panelButton).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(panelButton);
+
+    expect(storeState.setTaskPanelOpen).toHaveBeenCalledWith(true);
+  });
+
+  it("closes the current session panel from the active top bar toggle", () => {
+    window.location.hash = "#/session/s1";
+    resetStore({
+      currentSessionId: "s1",
+      taskPanelOpen: true,
+      sessions: new Map([["s1", { cwd: "/repo" }]]),
+      sdkSessions: [{ sessionId: "s1", createdAt: 1, name: "Main Session", cliConnected: true, state: "connected" }],
+    });
+
+    render(<TopBar />);
+
+    const panelButton = screen.getByRole("button", { name: "Close session panel" });
+    expect(panelButton).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(panelButton);
+
+    expect(storeState.setTaskPanelOpen).toHaveBeenCalledWith(false);
   });
 
   it("shows a leader portrait before the leader session name and routes it to session info", async () => {
