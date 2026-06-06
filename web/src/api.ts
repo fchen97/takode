@@ -35,6 +35,7 @@ import {
   type RestartServerResponse,
   type ServerCheckoutInfo,
 } from "./api/server-restart.js";
+import { createWorkspaceTokenUsageApi } from "./api/workspace-token-usage.js";
 import type {
   TranscriptionLogEntry,
   TranscriptionLogIndexEntry,
@@ -48,7 +49,6 @@ import type { SendKeyScheme } from "../shared/send-key-scheme.js";
 import type { CodexLeaderCompactionMode } from "../shared/codex-leader-compaction-mode.js";
 import type { WorkerSlotLimits } from "../shared/takode-constants.js";
 import { observedThreadMonitorResultId } from "./utils/thread-monitoring.js";
-import type { WorkspaceTokenUsageByModelSummary } from "./api/workspace-token-usage-types.js";
 
 export { checkHealth, checkHealthStatus, checkReadiness, checkReadinessStatus } from "./api/server-status.js";
 export type { ServerStatusProbe } from "./api/server-status.js";
@@ -129,15 +129,7 @@ export type {
   VoiceTranscriptionTiming,
 } from "./transcription-progress.js";
 
-export type {
-  WorkspaceTokenUsageByModelRow,
-  WorkspaceTokenUsageByModelSummary,
-  WorkspaceTokenUsageHistogramBucket,
-  WorkspaceTokenUsageHistogramModel,
-  WorkspaceTokenUsageHistogramRange,
-  WorkspaceTokenUsageHistorySummary,
-  WorkspaceTokenUsageRangeId,
-} from "./api/workspace-token-usage-types.js";
+export type * from "./api/workspace-token-usage-types.js";
 
 export {
   getTranscriptionRequestTimeoutMs,
@@ -1023,8 +1015,7 @@ export const api = {
   listSessions,
   pollActiveSessions,
   getSessionInfo,
-  getWorkspaceTokenUsageByModel: (signal?: AbortSignal) =>
-    get<WorkspaceTokenUsageByModelSummary>("/sessions/token-usage-by-model", signal),
+  ...createWorkspaceTokenUsageApi(get),
 
   getDelegateTrace: (
     sessionId: string,
