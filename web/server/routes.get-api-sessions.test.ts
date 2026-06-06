@@ -1191,4 +1191,97 @@ describe("GET /api/sessions", () => {
     // s2: non-archived worktree — no worktree status fields
     expect(json[1].worktreeExists).toBeUndefined();
   });
+
+  it("aggregates workspace token usage by model across active and archived persisted sessions", async () => {
+    // This route must not depend on the browser's active-only session snapshot;
+    // archived sessions with persisted bridge data still contribute to workspace totals.
+    const now = Date.now();
+    launcher.listSessions.mockReturnValue([
+      { sessionId: "active", state: "connected", cwd: "/a", archived: false, backendType: "claude" },
+      { sessionId: "archived", state: "exited", cwd: "/b", archived: true, backendType: "codex" },
+    ]);
+    bridge._sessions = {
+      active: {
+        id: "active",
+        state: { backend_type: "claude", model: "claude-sonnet" },
+        messageHistory: [
+          {
+            type: "result",
+            timestamp: now - 2 * 24 * 60 * 60 * 1000,
+            data: {
+              modelUsage: {
+                "claude-sonnet": {
+                  inputTokens: 70,
+                  outputTokens: 10,
+                  cacheReadInputTokens: 20,
+                  cacheCreationInputTokens: 0,
+                },
+              },
+            },
+          },
+          {
+            type: "result",
+            timestamp: now - 24 * 60 * 60 * 1000,
+            data: {
+              modelUsage: {
+                "claude-sonnet": {
+                  inputTokens: 100,
+                  outputTokens: 20,
+                  cacheReadInputTokens: 30,
+                  cacheCreationInputTokens: 0,
+                },
+              },
+            },
+          },
+        ],
+      },
+      archived: {
+        id: "archived",
+        state: {
+          backend_type: "codex",
+          model: "gpt-5.3-codex",
+          codex_token_details: {
+            totalTokens: 52,
+            inputTokens: 40,
+            outputTokens: 10,
+            cachedInputTokens: 5,
+            reasoningOutputTokens: 2,
+            modelContextWindow: 200_000,
+          },
+          token_usage_samples: [
+            { timestamp: now - 2 * 24 * 60 * 60 * 1000, backend: "codex", model: "gpt-5.3-codex", totalTokens: 30 },
+            { timestamp: now - 24 * 60 * 60 * 1000, backend: "codex", model: "gpt-5.3-codex", totalTokens: 52 },
+          ],
+        },
+        messageHistory: [],
+      },
+    };
+
+    const res = await app.request("/api/sessions/token-usage-by-model", { method: "GET" });
+
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.totalTokens).toBe(202);
+    expect(json.models).toMatchObject([
+      {
+        model: "claude-sonnet",
+        totalTokens: 150,
+        inputTokens: 100,
+        outputTokens: 20,
+        cachedInputTokens: 30,
+        sessionCount: 1,
+      },
+      {
+        model: "gpt-5.3-codex",
+        totalTokens: 52,
+        inputTokens: 40,
+        outputTokens: 10,
+        cachedInputTokens: 5,
+        reasoningOutputTokens: 2,
+        sessionCount: 1,
+        codexModelAttributionLimited: true,
+      },
+    ]);
+    expect(json.history.ranges.find((range: { id: string }) => range.id === "week").totalTokens).toBe(72);
+  });
 });

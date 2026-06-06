@@ -1483,6 +1483,7 @@ describe("CodexAdapter", () => {
     expect(lastUpdate.session.codex_token_details?.providerReportedTotalTokens).toBe(90_000);
 
     // codex_token_details should still show cumulative totals
+    expect(lastUpdate.session.codex_token_details?.totalTokens).toBe(1_200_000);
     expect(lastUpdate.session.codex_token_details?.inputTokens).toBe(1_150_000);
     expect(lastUpdate.session.codex_token_details?.outputTokens).toBe(50_000);
     expect(lastUpdate.session.codex_token_details?.cachedInputTokens).toBe(930_000);

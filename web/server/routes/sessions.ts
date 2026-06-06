@@ -1167,7 +1167,7 @@ export function createSessionsRoutes(ctx: RouteContext) {
   const buildEnrichedSessions = (filterFn?: (s: ReturnType<CliLauncher["listSessions"]>[number]) => boolean) =>
     buildEnrichedSessionsSnapshot(sessionSnapshotDeps, filterFn);
 
-  const backfillSessionProjectMeta = createSessionProjectMetaBackfill(gitUtils.getRepoInfoAsync);
+  const backfillSessionProjectMeta = createSessionProjectMetaBackfill((cwd) => gitUtils.getRepoInfoAsync(cwd));
   api.get("/sessions", async (c) => {
     const includeArchived = parseIncludeArchived(c.req.query("includeArchived"));
     const enriched = await buildEnrichedSessions(includeArchived ? undefined : (session) => !session.archived);

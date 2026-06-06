@@ -986,9 +986,11 @@ export function handleResultMessage(
     deps.onSessionActivityStateChanged(session.id, "result_cleared_permissions");
   }
 
+  const resultTimestamp = Date.now();
   const provisionalResultBrowserMsg: BrowserIncomingMessage = {
     type: "result",
     data: msg,
+    timestamp: resultTimestamp,
     ...(turnWasInterrupted ? { interrupted: true } : {}),
     ...(resultTurnRoute?.threadKey ? { threadKey: resultTurnRoute.threadKey } : {}),
     ...(resultTurnRoute?.questId ? { questId: resultTurnRoute.questId } : {}),

@@ -939,7 +939,7 @@ export type BrowserIncomingMessageBase =
     }
   | CodexReasoningDetailMessage
   | { type: "stream_event"; event: unknown; parent_tool_use_id: string | null }
-  | { type: "result"; data: CLIResultMessage; interrupted?: boolean }
+  | { type: "result"; data: CLIResultMessage; interrupted?: boolean; timestamp?: number }
   | { type: "permission_request"; request: PermissionRequest }
   | { type: "permission_cancelled"; request_id: string }
   | {
@@ -1441,12 +1441,15 @@ export interface SessionState extends BackendSessionState {
     displayContextTokensUsed?: number;
     /** Provider-reported latest response total and normal Codex display numerator. */
     providerReportedTotalTokens?: number;
+    totalTokens?: number;
     inputTokens: number;
     outputTokens: number;
     cachedInputTokens: number;
     reasoningOutputTokens: number;
     modelContextWindow: number;
   };
+  /** Bounded cumulative token snapshots used for best-effort workspace usage histograms. */
+  token_usage_samples?: SessionTokenUsageSample[];
   /** Resolved Codex leader recycle threshold for display-only effective context metrics. */
   codex_leader_recycle_threshold_tokens?: number;
   // Claude/CloudCode token details (forwarded from result.modelUsage)

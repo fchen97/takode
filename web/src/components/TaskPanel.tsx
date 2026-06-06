@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, useMemo } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { createPortal } from "react-dom";
 import { useStore } from "../store.js";
-import { api, type GitHubPRInfo } from "../api.js";
+import { api, type GitHubPRInfo, type WorkspaceTokenUsageByModelSummary } from "../api.js";
 import type { TaskItem, SessionTaskEntry, SdkSessionInfo } from "../types.js";
 import { McpSection } from "./McpPanel.js";
 import { ClaudeMdEditor } from "./ClaudeMdEditor.js";
@@ -301,6 +301,292 @@ function CodexTokenDetailsSection({ sessionId }: { sessionId: string }) {
   );
 }
 
+function formatTokenBreakdown(row: WorkspaceTokenUsageByModelSummary["models"][number]): string {
+  const parts = [`input ${formatTokenCount(row.inputTokens)}`, `output ${formatTokenCount(row.outputTokens)}`];
+  if (row.cachedInputTokens > 0) parts.push(`cached ${formatTokenCount(row.cachedInputTokens)}`);
+  if (row.reasoningOutputTokens > 0) parts.push(`reasoning ${formatTokenCount(row.reasoningOutputTokens)}`);
+  return parts.join(" · ");
+}
+
+const WORKSPACE_USAGE_SERIES_COLORS = [
+  "var(--color-cc-primary)",
+  "var(--color-cc-info)",
+  "var(--color-cc-success)",
+  "var(--color-cc-attention)",
+  "var(--color-cc-muted)",
+];
+
+function formatUsageDayLabel(date: string): string {
+  const parsed = new Date(`${date}T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) return date;
+  return parsed.toLocaleDateString(undefined, { month: "numeric", day: "numeric" });
+}
+
+function formatUsageDayDetailLabel(date: string): string {
+  const parsed = new Date(`${date}T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) return date;
+  return parsed.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric" });
+}
+
+function rangeModelTotals(range: WorkspaceTokenUsageByModelSummary["history"]["ranges"][number]) {
+  const totals = new Map<string, number>();
+  for (const bucket of range.buckets) {
+    for (const model of bucket.models) {
+      totals.set(model.model, (totals.get(model.model) ?? 0) + model.totalTokens);
+    }
+  }
+  return [...totals.entries()]
+    .map(([model, totalTokens]) => ({ model, totalTokens }))
+    .sort((a, b) => b.totalTokens - a.totalTokens || a.model.localeCompare(b.model));
+}
+
+function defaultSelectedUsageBucket(range: WorkspaceTokenUsageByModelSummary["history"]["ranges"][number]) {
+  for (let index = range.buckets.length - 1; index >= 0; index -= 1) {
+    const bucket = range.buckets[index];
+    if (bucket && bucket.totalTokens > 0) return bucket;
+  }
+  return range.buckets.at(-1) ?? null;
+}
+
+function WorkspaceTokenUsageHistogram({ summary }: { summary: WorkspaceTokenUsageByModelSummary }) {
+  const [selectedRangeId, setSelectedRangeId] = useState<"week" | "month">("week");
+  const [selectedBucketDate, setSelectedBucketDate] = useState<string | null>(null);
+  const ranges = summary.history?.ranges ?? [];
+  const selectedRange = ranges.find((range) => range.id === selectedRangeId) ?? ranges[0];
+  const modelTotals = useMemo(() => (selectedRange ? rangeModelTotals(selectedRange) : []), [selectedRange]);
+  const selectedBucket = useMemo(() => {
+    if (!selectedRange) return null;
+    return (
+      selectedRange.buckets.find((bucket) => bucket.date === selectedBucketDate) ??
+      defaultSelectedUsageBucket(selectedRange)
+    );
+  }, [selectedBucketDate, selectedRange]);
+  const colorByModel = useMemo(
+    () =>
+      new Map(
+        modelTotals.map((entry, index) => [
+          entry.model,
+          WORKSPACE_USAGE_SERIES_COLORS[index % WORKSPACE_USAGE_SERIES_COLORS.length],
+        ]),
+      ),
+    [modelTotals],
+  );
+
+  if (!selectedRange) return null;
+  const maxBucketTotal = Math.max(1, ...selectedRange.buckets.map((bucket) => bucket.totalTokens));
+  const hasDailyUsage = selectedRange.totalTokens > 0;
+  const limitedReason = summary.history?.limitedReasons?.[0];
+  const usesScrollableDayStrip = selectedRange.buckets.length > 14;
+
+  return (
+    <div className="space-y-2 rounded-lg border border-cc-border/70 bg-cc-hover/20 px-2.5 py-2">
+      <div className="flex items-center justify-between gap-2">
+        <div
+          className="flex items-center rounded-md border border-cc-border bg-cc-input-bg p-0.5"
+          aria-label="Token usage range"
+        >
+          {ranges.map((range) => {
+            const selected = range.id === selectedRange.id;
+            return (
+              <button
+                key={range.id}
+                type="button"
+                onClick={() => setSelectedRangeId(range.id)}
+                aria-pressed={selected}
+                className={`rounded px-2 py-0.5 text-[10px] font-medium transition-colors cursor-pointer ${
+                  selected ? "bg-cc-primary/15 text-cc-primary" : "text-cc-muted hover:bg-cc-hover hover:text-cc-fg"
+                }`}
+              >
+                {range.id === "week" ? "7D" : "30D"}
+              </button>
+            );
+          })}
+        </div>
+        <span className="text-[10px] text-cc-muted tabular-nums">{formatTokenCount(selectedRange.totalTokens)}</span>
+      </div>
+
+      {hasDailyUsage ? (
+        <>
+          <div
+            className={`flex h-20 items-end ${
+              usesScrollableDayStrip ? "gap-0.5 overflow-x-auto overflow-y-hidden pb-1 pr-0.5" : "gap-1 overflow-hidden"
+            }`}
+            data-testid="workspace-token-histogram-days"
+            aria-label={`${selectedRange.label} daily token histogram`}
+          >
+            {selectedRange.buckets.map((bucket) => {
+              const heightPct = Math.max(8, Math.round((bucket.totalTokens / maxBucketTotal) * 100));
+              const selected = bucket.date === selectedBucket?.date;
+              const title = `${bucket.date}: ${formatTokenCount(bucket.totalTokens)} tokens`;
+              return (
+                <button
+                  key={bucket.date}
+                  type="button"
+                  onClick={() => setSelectedBucketDate(bucket.date)}
+                  aria-label={title}
+                  aria-pressed={selected}
+                  className={`group flex cursor-pointer flex-col items-center gap-1 rounded-sm text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cc-primary/70 ${
+                    usesScrollableDayStrip ? "w-6 shrink-0" : "min-w-0 flex-1"
+                  }`}
+                  title={title}
+                >
+                  <div
+                    className={`flex h-14 w-full max-w-3 items-end overflow-hidden rounded-sm transition-colors ${
+                      selected ? "bg-cc-primary/20 ring-1 ring-cc-primary/70" : "bg-cc-hover/70 group-hover:bg-cc-hover"
+                    }`}
+                  >
+                    {bucket.totalTokens > 0 && (
+                      <div className="flex w-full flex-col-reverse" style={{ height: `${heightPct}%` }}>
+                        {bucket.models.map((model) => (
+                          <div
+                            key={model.model}
+                            style={{
+                              height: `${Math.max(3, (model.totalTokens / bucket.totalTokens) * 100)}%`,
+                              backgroundColor: colorByModel.get(model.model) ?? WORKSPACE_USAGE_SERIES_COLORS[0],
+                            }}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  {(selectedRange.id === "week" ||
+                    bucket.date.endsWith("-01") ||
+                    bucket === selectedRange.buckets.at(-1)) && (
+                    <span className="text-[9px] text-cc-muted tabular-nums">{formatUsageDayLabel(bucket.date)}</span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+          {selectedBucket && (
+            <div
+              className="border-t border-cc-border/50 pt-2"
+              data-testid="workspace-token-selected-day"
+              aria-live="polite"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-[10px] font-medium uppercase text-cc-muted">Selected day</div>
+                  <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
+                    <span className="text-[11px] font-medium text-cc-fg">
+                      {formatUsageDayDetailLabel(selectedBucket.date)}
+                    </span>
+                    <span className="font-mono-code text-[10px] text-cc-muted">{selectedBucket.date}</span>
+                  </div>
+                </div>
+                <span className="shrink-0 text-[11px] font-medium tabular-nums text-cc-fg">
+                  {formatTokenCount(selectedBucket.totalTokens)}
+                </span>
+              </div>
+              {selectedBucket.models.length > 0 ? (
+                <div className="mt-1.5 space-y-1">
+                  {selectedBucket.models.map((entry) => (
+                    <div key={entry.model} className="flex items-center justify-between gap-2 text-[10px]">
+                      <span className="inline-flex min-w-0 items-center gap-1 text-cc-muted">
+                        <span
+                          className="h-2 w-2 shrink-0 rounded-sm"
+                          style={{ backgroundColor: colorByModel.get(entry.model) ?? WORKSPACE_USAGE_SERIES_COLORS[0] }}
+                        />
+                        <span className="min-w-0 truncate font-mono-code">{entry.model}</span>
+                      </span>
+                      <span className="shrink-0 tabular-nums text-cc-fg">{formatTokenCount(entry.totalTokens)}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="mt-1.5 text-[10px] leading-snug text-cc-muted">
+                  No recorded daily tokens for this day.
+                </div>
+              )}
+            </div>
+          )}
+          <div className="flex flex-wrap gap-x-2 gap-y-1">
+            {modelTotals.slice(0, 5).map((entry) => (
+              <span key={entry.model} className="inline-flex min-w-0 items-center gap-1 text-[10px] text-cc-muted">
+                <span
+                  className="h-2 w-2 shrink-0 rounded-sm"
+                  style={{ backgroundColor: colorByModel.get(entry.model) ?? WORKSPACE_USAGE_SERIES_COLORS[0] }}
+                />
+                <span className="max-w-[8rem] truncate font-mono-code">{entry.model}</span>
+              </span>
+            ))}
+          </div>
+        </>
+      ) : (
+        <div className="rounded-md border border-cc-border/50 bg-cc-card/40 px-2 py-2 text-[10px] leading-snug text-cc-muted">
+          {limitedReason ?? "No daily token usage in this range."}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function WorkspaceTokenUsageByModelView({ summary }: { summary: WorkspaceTokenUsageByModelSummary | null }) {
+  if (!summary || summary.models.length === 0) return null;
+
+  return (
+    <div className="shrink-0 px-4 py-3 border-b border-cc-border space-y-2">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-[11px] text-cc-muted uppercase tracking-wider">Workspace Tokens</span>
+        <span className="text-[11px] text-cc-fg tabular-nums font-medium">{formatTokenCount(summary.totalTokens)}</span>
+      </div>
+      <div className="space-y-1.5">
+        {summary.models.map((row) => (
+          <div key={row.model} className="space-y-1" title={formatTokenBreakdown(row)}>
+            <div className="flex items-center justify-between gap-3">
+              <span className="min-w-0 truncate text-[11px] text-cc-fg font-mono-code">{row.model}</span>
+              <span className="shrink-0 text-[11px] text-cc-fg tabular-nums font-medium">
+                {formatTokenCount(row.totalTokens)}
+              </span>
+            </div>
+            <div className="flex items-center justify-between gap-3 text-[10px] text-cc-muted">
+              <span className="truncate">{formatTokenBreakdown(row)}</span>
+              <span className="shrink-0 tabular-nums">
+                {row.sessionCount} {row.sessionCount === 1 ? "session" : "sessions"}
+              </span>
+            </div>
+          </div>
+        ))}
+      </div>
+      <WorkspaceTokenUsageHistogram summary={summary} />
+    </div>
+  );
+}
+
+function WorkspaceTokenUsageByModelSection() {
+  const [summary, setSummary] = useState<WorkspaceTokenUsageByModelSummary | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    let controller: AbortController | null = null;
+
+    const load = () => {
+      controller?.abort();
+      controller = new AbortController();
+      api
+        .getWorkspaceTokenUsageByModel(controller.signal)
+        .then((nextSummary) => {
+          if (!cancelled) setSummary(nextSummary);
+        })
+        .catch((error) => {
+          if (!cancelled && !(error instanceof DOMException && error.name === "AbortError")) {
+            setSummary(null);
+          }
+        });
+    };
+
+    load();
+    const timer = setInterval(load, 30_000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+      controller?.abort();
+    };
+  }, []);
+
+  return <WorkspaceTokenUsageByModelView summary={summary} />;
+}
+
 // ─── GitHub PR Status ────────────────────────────────────────────────────────
 
 function prStatePill(state: GitHubPRInfo["state"], isDraft: boolean) {
@@ -488,6 +774,7 @@ function UsageCollapsible({ sessionId, isCodex }: { sessionId: string; isCodex: 
             <CodexTokenDetailsSection sessionId={sessionId} />
           </>
         ))}
+      {!collapsed && <WorkspaceTokenUsageByModelSection />}
     </>
   );
 }
@@ -754,7 +1041,7 @@ function SystemPromptModal({
 
 // ─── Task Panel ──────────────────────────────────────────────────────────────
 
-export { CodexRateLimitsSection, CodexTokenDetailsSection };
+export { CodexRateLimitsSection, CodexTokenDetailsSection, WorkspaceTokenUsageByModelSection };
 
 function SessionTasksSection({ sessionId }: { sessionId: string }) {
   const taskHistory = useStore((s) => s.sessionTaskHistory.get(sessionId));
