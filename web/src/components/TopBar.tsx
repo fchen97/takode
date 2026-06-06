@@ -121,6 +121,8 @@ export function TopBar({
     activeQuestCount,
     refreshQuestSummary,
     isCurrentLeaderSession,
+    taskPanelOpen,
+    setTaskPanelOpen,
   } = useStore(
     useShallow((s) => ({
       currentSessionId: s.currentSessionId,
@@ -136,6 +138,8 @@ export function TopBar({
       isCurrentLeaderSession:
         !!s.currentSessionId &&
         s.sdkSessions.some((session) => session.sessionId === s.currentSessionId && session.isOrchestrator === true),
+      taskPanelOpen: s.taskPanelOpen,
+      setTaskPanelOpen: s.setTaskPanelOpen,
     })),
   );
   const {
@@ -521,6 +525,20 @@ export function TopBar({
               <span className="text-cc-warning font-medium animate-pulse">Compacting...</span>
             )}
             {status === "reverting" && <span className="text-cc-warning font-medium animate-pulse">Reverting...</span>}
+            {/* Session panel toggle */}
+            <button
+              onClick={() => setTaskPanelOpen(!taskPanelOpen)}
+              className={`relative flex items-center justify-center w-7 h-7 rounded-lg transition-colors cursor-pointer ${
+                taskPanelOpen ? "text-cc-primary bg-cc-active" : "text-cc-muted hover:text-cc-fg hover:bg-cc-hover"
+              }`}
+              title={taskPanelOpen ? "Close session panel" : "Open session panel"}
+              aria-label={taskPanelOpen ? "Close session panel" : "Open session panel"}
+              aria-pressed={taskPanelOpen}
+            >
+              <svg viewBox="0 0 16 16" fill="currentColor" className="w-4 h-4">
+                <path d="M2.5 2A1.5 1.5 0 001 3.5v9A1.5 1.5 0 002.5 14h11a1.5 1.5 0 001.5-1.5v-9A1.5 1.5 0 0013.5 2h-11zM2 3.5a.5.5 0 01.5-.5H10v10H2.5a.5.5 0 01-.5-.5v-9zm9.5 9.5H11V3h2.5a.5.5 0 01.5.5v9a.5.5 0 01-.5.5h-2zM4 5.5a.5.5 0 01.5-.5h3a.5.5 0 010 1h-3a.5.5 0 01-.5-.5zM4 8a.5.5 0 01.5-.5h3a.5.5 0 010 1h-3A.5.5 0 014 8zm.5 2a.5.5 0 000 1h2a.5.5 0 000-1h-2z" />
+              </svg>
+            </button>
             {infoOpen && currentSessionId && (
               <SessionInfoPopover
                 sessionId={currentSessionId}
