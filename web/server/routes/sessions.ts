@@ -75,6 +75,7 @@ import { markOrchestratorSessionWithStartupContext } from "./orchestrator-startu
 import { relaunchSessionProcess } from "./session-process-relaunch.js";
 import { buildSessionBackendLaunchSettings } from "./session-create-launch-settings.js";
 import { buildBrowserSessionDetail } from "./session-detail-response.js";
+import { buildWorkspaceTokenUsageByModel } from "../workspace-token-usage.js";
 
 export function createSessionsRoutes(ctx: RouteContext) {
   const api = new Hono();
@@ -1186,6 +1187,13 @@ export function createSessionsRoutes(ctx: RouteContext) {
     return c.json(enriched);
   });
   registerArchivedSessionPageRoute(api, sessionSnapshotDeps);
+  api.get("/sessions/token-usage-by-model", (c) => {
+    const sessions = launcher.listSessions().map((session) => ({
+      sessionId: session.sessionId,
+      source: wsBridge.getSession(session.sessionId),
+    }));
+    return c.json(buildWorkspaceTokenUsageByModel(sessions));
+  });
   registerSessionSearchRoute(api, { launcher, wsBridge, authenticateCompanionCallerOptional });
   registerGlobalStarredMessageSearchRoute(api, { launcher, wsBridge });
   registerGlobalRecentAsksRoute(api, { launcher, wsBridge });

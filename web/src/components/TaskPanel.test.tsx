@@ -15,6 +15,7 @@ const { mockApi } = vi.hoisted(() => ({
     getPRStatus: vi.fn().mockRejectedValue(new Error("skip")),
     getClaudeMdFiles: vi.fn().mockResolvedValue({ cwd: "/repo", files: [] }),
     getAutoApprovalConfigForPath: vi.fn().mockResolvedValue({ config: null }),
+    getWorkspaceTokenUsageByModel: vi.fn().mockResolvedValue({ models: [], totalTokens: 0, generatedAt: 1 }),
     getHerdDiagnostics: vi.fn().mockResolvedValue({
       herdDispatcher: { pendingEventCount: 0, eventHistory: [] },
       isGenerating: false,
@@ -191,13 +192,20 @@ vi.mock("../store.js", () => {
   };
 });
 
-import { TaskPanel, CodexRateLimitsSection, CodexTokenDetailsSection, ClaudeMdCollapsible } from "./TaskPanel.js";
+import {
+  TaskPanel,
+  CodexRateLimitsSection,
+  CodexTokenDetailsSection,
+  ClaudeMdCollapsible,
+  WorkspaceTokenUsageByModelView,
+} from "./TaskPanel.js";
 
 beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
   mockApi.getClaudeMdFiles.mockResolvedValue({ cwd: "/repo", files: [] });
   mockApi.getAutoApprovalConfigForPath.mockResolvedValue({ config: null });
+  mockApi.getWorkspaceTokenUsageByModel.mockResolvedValue({ models: [], totalTokens: 0, generatedAt: 1 });
   resetStore();
 });
 
@@ -434,6 +442,42 @@ describe("TaskPanel", () => {
     expect(screen.getByTestId("mcp-section")).toBeInTheDocument();
     expect(screen.getByTestId("task-panel-content")).toHaveClass("overflow-y-auto");
     expect(container.querySelectorAll(".overflow-y-auto")).toHaveLength(1);
+  });
+
+  it("renders workspace token totals by model in the Usage section", async () => {
+    mockApi.getWorkspaceTokenUsageByModel.mockResolvedValue({
+      totalTokens: 1_234_000,
+      generatedAt: 1,
+      models: [
+        {
+          model: "claude-sonnet-4-5-20250929",
+          totalTokens: 900_000,
+          inputTokens: 300_000,
+          outputTokens: 100_000,
+          cachedInputTokens: 500_000,
+          reasoningOutputTokens: 0,
+          sessionCount: 3,
+        },
+        {
+          model: "gpt-5.3-codex",
+          totalTokens: 334_000,
+          inputTokens: 120_000,
+          outputTokens: 40_000,
+          cachedInputTokens: 150_000,
+          reasoningOutputTokens: 24_000,
+          sessionCount: 2,
+          codexModelAttributionLimited: true,
+        },
+      ],
+    });
+
+    render(<TaskPanel sessionId="s1" />);
+
+    expect(await screen.findByText("Workspace Tokens")).toBeInTheDocument();
+    expect(screen.getByText("1.2M")).toBeInTheDocument();
+    expect(screen.getByText("claude-sonnet-4-5-20250929")).toBeInTheDocument();
+    expect(screen.getByText("gpt-5.3-codex")).toBeInTheDocument();
+    expect(screen.getByText("2 sessions")).toBeInTheDocument();
   });
 
   it("renders the selected session claimed quest with verification, feedback, and owner details", () => {
@@ -916,5 +960,45 @@ describe("CodexTokenDetailsSection", () => {
     });
     render(<CodexTokenDetailsSection sessionId="s1" />);
     expect(screen.queryByText("Context")).not.toBeInTheDocument();
+  });
+});
+
+describe("WorkspaceTokenUsageByModelView", () => {
+  it("omits itself when there are no usable model rows", () => {
+    const { container } = render(
+      <WorkspaceTokenUsageByModelView summary={{ models: [], totalTokens: 0, generatedAt: 1 }} />,
+    );
+
+    expect(container.firstChild).toBeNull();
+  });
+
+  it("renders compact totals and token category breakdowns", () => {
+    // Rendering coverage for the server-shaped aggregate: the total is shown
+    // by model while category details remain available for double-counting review.
+    render(
+      <WorkspaceTokenUsageByModelView
+        summary={{
+          totalTokens: 1_050_000,
+          generatedAt: 1,
+          models: [
+            {
+              model: "claude-sonnet",
+              totalTokens: 1_050_000,
+              inputTokens: 300_000,
+              outputTokens: 50_000,
+              cachedInputTokens: 700_000,
+              reasoningOutputTokens: 0,
+              sessionCount: 4,
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.getByText("Workspace Tokens")).toBeInTheDocument();
+    expect(screen.getAllByText("1.1M")).toHaveLength(2);
+    expect(screen.getByText("claude-sonnet")).toBeInTheDocument();
+    expect(screen.getByText("input 300.0k · output 50.0k · cached 700.0k")).toBeInTheDocument();
+    expect(screen.getByText("4 sessions")).toBeInTheDocument();
   });
 });

@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, useMemo, useSyncExternalStore } from 
 import { useShallow } from "zustand/react/shallow";
 import { createPortal } from "react-dom";
 import { useStore } from "../store.js";
-import { api, type GitHubPRInfo } from "../api.js";
+import { api, type GitHubPRInfo, type WorkspaceTokenUsageByModelSummary } from "../api.js";
 import type { TaskItem, SessionTaskEntry, SdkSessionInfo } from "../types.js";
 import { McpSection } from "./McpPanel.js";
 import { ClaudeMdEditor } from "./ClaudeMdEditor.js";
@@ -349,6 +349,78 @@ function CodexTokenDetailsSection({ sessionId }: { sessionId: string }) {
   );
 }
 
+function formatTokenBreakdown(row: WorkspaceTokenUsageByModelSummary["models"][number]): string {
+  const parts = [`input ${formatTokenCount(row.inputTokens)}`, `output ${formatTokenCount(row.outputTokens)}`];
+  if (row.cachedInputTokens > 0) parts.push(`cached ${formatTokenCount(row.cachedInputTokens)}`);
+  if (row.reasoningOutputTokens > 0) parts.push(`reasoning ${formatTokenCount(row.reasoningOutputTokens)}`);
+  return parts.join(" · ");
+}
+
+export function WorkspaceTokenUsageByModelView({ summary }: { summary: WorkspaceTokenUsageByModelSummary | null }) {
+  if (!summary || summary.models.length === 0) return null;
+
+  return (
+    <div className="shrink-0 px-4 py-3 border-b border-cc-border space-y-2">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-[11px] text-cc-muted uppercase tracking-wider">Workspace Tokens</span>
+        <span className="text-[11px] text-cc-fg tabular-nums font-medium">{formatTokenCount(summary.totalTokens)}</span>
+      </div>
+      <div className="space-y-1.5">
+        {summary.models.map((row) => (
+          <div key={row.model} className="space-y-1" title={formatTokenBreakdown(row)}>
+            <div className="flex items-center justify-between gap-3">
+              <span className="min-w-0 truncate text-[11px] text-cc-fg font-mono-code">{row.model}</span>
+              <span className="shrink-0 text-[11px] text-cc-fg tabular-nums font-medium">
+                {formatTokenCount(row.totalTokens)}
+              </span>
+            </div>
+            <div className="flex items-center justify-between gap-3 text-[10px] text-cc-muted">
+              <span className="truncate">{formatTokenBreakdown(row)}</span>
+              <span className="shrink-0 tabular-nums">
+                {row.sessionCount} {row.sessionCount === 1 ? "session" : "sessions"}
+              </span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function WorkspaceTokenUsageByModelSection() {
+  const [summary, setSummary] = useState<WorkspaceTokenUsageByModelSummary | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    let controller: AbortController | null = null;
+
+    const load = () => {
+      controller?.abort();
+      controller = new AbortController();
+      api
+        .getWorkspaceTokenUsageByModel(controller.signal)
+        .then((nextSummary) => {
+          if (!cancelled) setSummary(nextSummary);
+        })
+        .catch((error) => {
+          if (!cancelled && !(error instanceof DOMException && error.name === "AbortError")) {
+            setSummary(null);
+          }
+        });
+    };
+
+    load();
+    const timer = setInterval(load, 30_000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+      controller?.abort();
+    };
+  }, []);
+
+  return <WorkspaceTokenUsageByModelView summary={summary} />;
+}
+
 // ─── GitHub PR Status ────────────────────────────────────────────────────────
 
 function prStatePill(state: GitHubPRInfo["state"], isDraft: boolean) {
@@ -536,6 +608,7 @@ function UsageCollapsible({ sessionId, isCodex }: { sessionId: string; isCodex: 
             <CodexTokenDetailsSection sessionId={sessionId} />
           </>
         ))}
+      {!collapsed && <WorkspaceTokenUsageByModelSection />}
     </>
   );
 }
@@ -757,7 +830,7 @@ function SystemPromptModal({ prompt, onClose }: { prompt: string; onClose: () =>
 
 // ─── Task Panel ──────────────────────────────────────────────────────────────
 
-export { CodexRateLimitsSection, CodexTokenDetailsSection };
+export { CodexRateLimitsSection, CodexTokenDetailsSection, WorkspaceTokenUsageByModelSection };
 
 function SessionTasksSection({ sessionId }: { sessionId: string }) {
   const taskHistory = useStore((s) => s.sessionTaskHistory.get(sessionId));

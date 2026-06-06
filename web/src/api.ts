@@ -106,6 +106,24 @@ export type {
   VoiceTranscriptionUiTiming,
   VoiceTranscriptionTiming,
 } from "./transcription-progress.js";
+
+export interface WorkspaceTokenUsageByModelRow {
+  model: string;
+  totalTokens: number;
+  inputTokens: number;
+  outputTokens: number;
+  cachedInputTokens: number;
+  reasoningOutputTokens: number;
+  sessionCount: number;
+  codexModelAttributionLimited?: boolean;
+}
+
+export interface WorkspaceTokenUsageByModelSummary {
+  models: WorkspaceTokenUsageByModelRow[];
+  totalTokens: number;
+  generatedAt: number;
+}
+
 export {
   getTranscriptionRequestTimeoutMs,
   resolveAudioUploadFilename,
@@ -1060,6 +1078,8 @@ export const api = {
 
   listSessions,
   getSessionInfo,
+  getWorkspaceTokenUsageByModel: (signal?: AbortSignal) =>
+    get<WorkspaceTokenUsageByModelSummary>("/sessions/token-usage-by-model", signal),
 
   getDelegateTrace: (
     sessionId: string,

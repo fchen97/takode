@@ -12,7 +12,7 @@ import { MessageBubble, NotificationMarker, HerdEventMessage } from "../MessageB
 import { ContextMenu, type ContextMenuItem } from "../ContextMenu.js";
 import { PawTrailAvatar } from "../PawTrail.js";
 import { StatusCountDots } from "../SessionItem.js";
-import { CodexRateLimitsSection, CodexTokenDetailsSection } from "../TaskPanel.js";
+import { CodexRateLimitsSection, CodexTokenDetailsSection, WorkspaceTokenUsageByModelView } from "../TaskPanel.js";
 import { TimerModal } from "../TimerWidget.js";
 import { ToolBlock, getToolIcon, getToolLabel, getPreview, ToolIcon, formatDuration } from "../ToolBlock.js";
 import { PLAYGROUND_SESSION_ROWS } from "./fixtures.js";
@@ -770,6 +770,33 @@ export function CodexPlaygroundDemo() {
     <div className="w-[280px] border border-cc-border rounded-xl overflow-hidden bg-cc-card">
       <CodexRateLimitsSection sessionId={CODEX_DEMO_SESSION} />
       <CodexTokenDetailsSection sessionId={CODEX_DEMO_SESSION} />
+      <WorkspaceTokenUsageByModelView
+        summary={{
+          totalTokens: 4_184_100,
+          generatedAt: Date.now(),
+          models: [
+            {
+              model: "claude-sonnet-4-5-20250929",
+              totalTokens: 2_650_400,
+              inputTokens: 1_010_000,
+              outputTokens: 240_400,
+              cachedInputTokens: 1_400_000,
+              reasoningOutputTokens: 0,
+              sessionCount: 7,
+            },
+            {
+              model: "gpt-5.3-codex",
+              totalTokens: 1_533_700,
+              inputTokens: 470_000,
+              outputTokens: 183_700,
+              cachedInputTokens: 780_000,
+              reasoningOutputTokens: 100_000,
+              sessionCount: 3,
+              codexModelAttributionLimited: true,
+            },
+          ],
+        }}
+      />
     </div>
   );
 }
