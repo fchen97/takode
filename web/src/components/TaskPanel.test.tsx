@@ -15,7 +15,12 @@ const { mockApi } = vi.hoisted(() => ({
     getPRStatus: vi.fn().mockRejectedValue(new Error("skip")),
     getClaudeMdFiles: vi.fn().mockResolvedValue({ cwd: "/repo", files: [] }),
     getAutoApprovalConfigForPath: vi.fn().mockResolvedValue({ config: null }),
-    getWorkspaceTokenUsageByModel: vi.fn().mockResolvedValue({ models: [], totalTokens: 0, generatedAt: 1 }),
+    getWorkspaceTokenUsageByModel: vi.fn().mockResolvedValue({
+      models: [],
+      totalTokens: 0,
+      history: { ranges: [], limited: false, limitedReasons: [] },
+      generatedAt: 1,
+    }),
     getHerdDiagnostics: vi.fn().mockResolvedValue({
       herdDispatcher: { pendingEventCount: 0, eventHistory: [] },
       isGenerating: false,
@@ -200,12 +205,28 @@ import {
   WorkspaceTokenUsageByModelView,
 } from "./TaskPanel.js";
 
+function emptyWorkspaceHistory() {
+  return {
+    ranges: [
+      { id: "week" as const, label: "Past week", days: 7, granularity: "day" as const, totalTokens: 0, buckets: [] },
+      { id: "month" as const, label: "Past month", days: 30, granularity: "day" as const, totalTokens: 0, buckets: [] },
+    ],
+    limited: false,
+    limitedReasons: [],
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
   mockApi.getClaudeMdFiles.mockResolvedValue({ cwd: "/repo", files: [] });
   mockApi.getAutoApprovalConfigForPath.mockResolvedValue({ config: null });
-  mockApi.getWorkspaceTokenUsageByModel.mockResolvedValue({ models: [], totalTokens: 0, generatedAt: 1 });
+  mockApi.getWorkspaceTokenUsageByModel.mockResolvedValue({
+    models: [],
+    totalTokens: 0,
+    history: emptyWorkspaceHistory(),
+    generatedAt: 1,
+  });
   resetStore();
 });
 
@@ -448,6 +469,7 @@ describe("TaskPanel", () => {
     mockApi.getWorkspaceTokenUsageByModel.mockResolvedValue({
       totalTokens: 1_234_000,
       generatedAt: 1,
+      history: emptyWorkspaceHistory(),
       models: [
         {
           model: "claude-sonnet-4-5-20250929",
@@ -478,6 +500,7 @@ describe("TaskPanel", () => {
     expect(screen.getByText("claude-sonnet-4-5-20250929")).toBeInTheDocument();
     expect(screen.getByText("gpt-5.3-codex")).toBeInTheDocument();
     expect(screen.getByText("2 sessions")).toBeInTheDocument();
+    expect(screen.getByText("7D")).toBeInTheDocument();
   });
 
   it("renders the selected session claimed quest with verification, feedback, and owner details", () => {
@@ -966,7 +989,9 @@ describe("CodexTokenDetailsSection", () => {
 describe("WorkspaceTokenUsageByModelView", () => {
   it("omits itself when there are no usable model rows", () => {
     const { container } = render(
-      <WorkspaceTokenUsageByModelView summary={{ models: [], totalTokens: 0, generatedAt: 1 }} />,
+      <WorkspaceTokenUsageByModelView
+        summary={{ models: [], totalTokens: 0, history: emptyWorkspaceHistory(), generatedAt: 1 }}
+      />,
     );
 
     expect(container.firstChild).toBeNull();
@@ -980,6 +1005,41 @@ describe("WorkspaceTokenUsageByModelView", () => {
         summary={{
           totalTokens: 1_050_000,
           generatedAt: 1,
+          history: {
+            ranges: [
+              {
+                id: "week",
+                label: "Past week",
+                days: 7,
+                granularity: "day",
+                totalTokens: 70,
+                buckets: [
+                  { date: "2026-01-06", totalTokens: 0, models: [] },
+                  {
+                    date: "2026-01-07",
+                    totalTokens: 70,
+                    models: [{ model: "claude-sonnet", totalTokens: 70 }],
+                  },
+                ],
+              },
+              {
+                id: "month",
+                label: "Past month",
+                days: 30,
+                granularity: "day",
+                totalTokens: 130,
+                buckets: [
+                  {
+                    date: "2026-01-01",
+                    totalTokens: 130,
+                    models: [{ model: "claude-sonnet", totalTokens: 130 }],
+                  },
+                ],
+              },
+            ],
+            limited: false,
+            limitedReasons: [],
+          },
           models: [
             {
               model: "claude-sonnet",
@@ -997,8 +1057,45 @@ describe("WorkspaceTokenUsageByModelView", () => {
 
     expect(screen.getByText("Workspace Tokens")).toBeInTheDocument();
     expect(screen.getAllByText("1.1M")).toHaveLength(2);
-    expect(screen.getByText("claude-sonnet")).toBeInTheDocument();
+    expect(screen.getAllByText("claude-sonnet")).toHaveLength(2);
     expect(screen.getByText("input 300.0k · output 50.0k · cached 700.0k")).toBeInTheDocument();
     expect(screen.getByText("4 sessions")).toBeInTheDocument();
+    expect(screen.getByText("70")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("30D"));
+    expect(screen.getByText("130")).toBeInTheDocument();
+  });
+
+  it("renders a limited-history state without fabricating histogram buckets", () => {
+    render(
+      <WorkspaceTokenUsageByModelView
+        summary={{
+          totalTokens: 120,
+          generatedAt: 1,
+          history: {
+            ranges: [
+              { id: "week", label: "Past week", days: 7, granularity: "day", totalTokens: 0, buckets: [] },
+              { id: "month", label: "Past month", days: 30, granularity: "day", totalTokens: 0, buckets: [] },
+            ],
+            limited: true,
+            limitedReasons: ["No timestamped token usage samples are available yet for daily buckets."],
+          },
+          models: [
+            {
+              model: "opus 4.7",
+              totalTokens: 120,
+              inputTokens: 100,
+              outputTokens: 20,
+              cachedInputTokens: 0,
+              reasoningOutputTokens: 0,
+              sessionCount: 1,
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(
+      screen.getByText("No timestamped token usage samples are available yet for daily buckets."),
+    ).toBeInTheDocument();
   });
 });

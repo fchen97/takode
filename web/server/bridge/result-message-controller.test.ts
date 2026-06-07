@@ -187,16 +187,18 @@ describe("result-message-controller", () => {
     );
 
     expect(session.messageHistory).toHaveLength(0);
+    // Transient broadcasts may carry transport metadata such as a timestamp;
+    // keep the retry payload and no-buffer contract authoritative.
     expect(deps.broadcastToBrowsers).toHaveBeenCalledWith(
       session,
-      {
+      expect.objectContaining({
         type: "result",
         data: expect.objectContaining({
           result: "Transient provider request failed; Takode is retrying.",
           errors: undefined,
           codex_provider_retry: expect.objectContaining({ ownerId: "input-1", attempt: 7 }),
         }),
-      },
+      }),
       { skipBuffer: true },
     );
     expect(JSON.stringify(deps.broadcastToBrowsers.mock.calls)).not.toContain("stream disconnected before completion");

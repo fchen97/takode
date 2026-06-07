@@ -356,6 +356,135 @@ function formatTokenBreakdown(row: WorkspaceTokenUsageByModelSummary["models"][n
   return parts.join(" · ");
 }
 
+const WORKSPACE_USAGE_SERIES_COLORS = [
+  "var(--color-cc-primary)",
+  "var(--color-cc-info)",
+  "var(--color-cc-success)",
+  "var(--color-cc-attention)",
+  "var(--color-cc-muted)",
+];
+
+function formatUsageDayLabel(date: string): string {
+  const parsed = new Date(`${date}T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) return date;
+  return parsed.toLocaleDateString(undefined, { month: "numeric", day: "numeric" });
+}
+
+function rangeModelTotals(range: WorkspaceTokenUsageByModelSummary["history"]["ranges"][number]) {
+  const totals = new Map<string, number>();
+  for (const bucket of range.buckets) {
+    for (const model of bucket.models) {
+      totals.set(model.model, (totals.get(model.model) ?? 0) + model.totalTokens);
+    }
+  }
+  return [...totals.entries()]
+    .map(([model, totalTokens]) => ({ model, totalTokens }))
+    .sort((a, b) => b.totalTokens - a.totalTokens || a.model.localeCompare(b.model));
+}
+
+function WorkspaceTokenUsageHistogram({ summary }: { summary: WorkspaceTokenUsageByModelSummary }) {
+  const [selectedRangeId, setSelectedRangeId] = useState<"week" | "month">("week");
+  const ranges = summary.history?.ranges ?? [];
+  const selectedRange = ranges.find((range) => range.id === selectedRangeId) ?? ranges[0];
+  const modelTotals = useMemo(() => (selectedRange ? rangeModelTotals(selectedRange) : []), [selectedRange]);
+  const colorByModel = useMemo(
+    () =>
+      new Map(
+        modelTotals.map((entry, index) => [
+          entry.model,
+          WORKSPACE_USAGE_SERIES_COLORS[index % WORKSPACE_USAGE_SERIES_COLORS.length],
+        ]),
+      ),
+    [modelTotals],
+  );
+
+  if (!selectedRange) return null;
+  const maxBucketTotal = Math.max(1, ...selectedRange.buckets.map((bucket) => bucket.totalTokens));
+  const hasDailyUsage = selectedRange.totalTokens > 0;
+  const limitedReason = summary.history?.limitedReasons?.[0];
+
+  return (
+    <div className="space-y-2 rounded-lg border border-cc-border/70 bg-cc-hover/20 px-2.5 py-2">
+      <div className="flex items-center justify-between gap-2">
+        <div
+          className="flex items-center rounded-md border border-cc-border bg-cc-input-bg p-0.5"
+          aria-label="Token usage range"
+        >
+          {ranges.map((range) => {
+            const selected = range.id === selectedRange.id;
+            return (
+              <button
+                key={range.id}
+                type="button"
+                onClick={() => setSelectedRangeId(range.id)}
+                className={`rounded px-2 py-0.5 text-[10px] font-medium transition-colors cursor-pointer ${
+                  selected ? "bg-cc-primary/15 text-cc-primary" : "text-cc-muted hover:bg-cc-hover hover:text-cc-fg"
+                }`}
+              >
+                {range.id === "week" ? "7D" : "30D"}
+              </button>
+            );
+          })}
+        </div>
+        <span className="text-[10px] text-cc-muted tabular-nums">{formatTokenCount(selectedRange.totalTokens)}</span>
+      </div>
+
+      {hasDailyUsage ? (
+        <>
+          <div
+            className="flex h-20 items-end gap-1 overflow-hidden"
+            aria-label={`${selectedRange.label} daily token histogram`}
+          >
+            {selectedRange.buckets.map((bucket) => {
+              const heightPct = Math.max(8, Math.round((bucket.totalTokens / maxBucketTotal) * 100));
+              const title = `${bucket.date}: ${formatTokenCount(bucket.totalTokens)}`;
+              return (
+                <div key={bucket.date} className="flex min-w-0 flex-1 flex-col items-center gap-1" title={title}>
+                  <div className="flex h-14 w-full max-w-3 items-end overflow-hidden rounded-sm bg-cc-hover/70">
+                    {bucket.totalTokens > 0 && (
+                      <div className="flex w-full flex-col-reverse" style={{ height: `${heightPct}%` }}>
+                        {bucket.models.map((model) => (
+                          <div
+                            key={model.model}
+                            style={{
+                              height: `${Math.max(3, (model.totalTokens / bucket.totalTokens) * 100)}%`,
+                              backgroundColor: colorByModel.get(model.model) ?? WORKSPACE_USAGE_SERIES_COLORS[0],
+                            }}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  {(selectedRange.id === "week" ||
+                    bucket.date.endsWith("-01") ||
+                    bucket === selectedRange.buckets.at(-1)) && (
+                    <span className="text-[9px] text-cc-muted tabular-nums">{formatUsageDayLabel(bucket.date)}</span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <div className="flex flex-wrap gap-x-2 gap-y-1">
+            {modelTotals.slice(0, 5).map((entry) => (
+              <span key={entry.model} className="inline-flex min-w-0 items-center gap-1 text-[10px] text-cc-muted">
+                <span
+                  className="h-2 w-2 shrink-0 rounded-sm"
+                  style={{ backgroundColor: colorByModel.get(entry.model) ?? WORKSPACE_USAGE_SERIES_COLORS[0] }}
+                />
+                <span className="max-w-[8rem] truncate font-mono-code">{entry.model}</span>
+              </span>
+            ))}
+          </div>
+        </>
+      ) : (
+        <div className="rounded-md border border-cc-border/50 bg-cc-card/40 px-2 py-2 text-[10px] leading-snug text-cc-muted">
+          {limitedReason ?? "No daily token usage in this range."}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function WorkspaceTokenUsageByModelView({ summary }: { summary: WorkspaceTokenUsageByModelSummary | null }) {
   if (!summary || summary.models.length === 0) return null;
 
@@ -383,6 +512,7 @@ export function WorkspaceTokenUsageByModelView({ summary }: { summary: Workspace
           </div>
         ))}
       </div>
+      <WorkspaceTokenUsageHistogram summary={summary} />
     </div>
   );
 }

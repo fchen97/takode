@@ -774,6 +774,90 @@ export function CodexPlaygroundDemo() {
         summary={{
           totalTokens: 4_184_100,
           generatedAt: Date.now(),
+          history: {
+            ranges: [
+              {
+                id: "week",
+                label: "Past week",
+                days: 7,
+                granularity: "day",
+                totalTokens: 932_000,
+                buckets: [
+                  {
+                    date: "2026-01-02",
+                    totalTokens: 90_000,
+                    models: [{ model: "gpt-5.3-codex", totalTokens: 90_000 }],
+                  },
+                  {
+                    date: "2026-01-03",
+                    totalTokens: 210_000,
+                    models: [
+                      { model: "claude-sonnet-4-5-20250929", totalTokens: 150_000 },
+                      { model: "gpt-5.3-codex", totalTokens: 60_000 },
+                    ],
+                  },
+                  {
+                    date: "2026-01-04",
+                    totalTokens: 132_000,
+                    models: [{ model: "claude-sonnet-4-5-20250929", totalTokens: 132_000 }],
+                  },
+                  {
+                    date: "2026-01-05",
+                    totalTokens: 284_000,
+                    models: [
+                      { model: "claude-sonnet-4-5-20250929", totalTokens: 194_000 },
+                      { model: "gpt-5.3-codex", totalTokens: 90_000 },
+                    ],
+                  },
+                  { date: "2026-01-06", totalTokens: 0, models: [] },
+                  {
+                    date: "2026-01-07",
+                    totalTokens: 216_000,
+                    models: [
+                      { model: "claude-sonnet-4-5-20250929", totalTokens: 101_000 },
+                      { model: "gpt-5.3-codex", totalTokens: 115_000 },
+                    ],
+                  },
+                  { date: "2026-01-08", totalTokens: 0, models: [] },
+                ],
+              },
+              {
+                id: "month",
+                label: "Past month",
+                days: 30,
+                granularity: "day",
+                totalTokens: 2_641_000,
+                buckets: [
+                  {
+                    date: "2026-01-01",
+                    totalTokens: 640_000,
+                    models: [
+                      { model: "claude-sonnet-4-5-20250929", totalTokens: 420_000 },
+                      { model: "gpt-5.3-codex", totalTokens: 220_000 },
+                    ],
+                  },
+                  {
+                    date: "2026-01-05",
+                    totalTokens: 801_000,
+                    models: [
+                      { model: "claude-sonnet-4-5-20250929", totalTokens: 520_000 },
+                      { model: "gpt-5.3-codex", totalTokens: 281_000 },
+                    ],
+                  },
+                  {
+                    date: "2026-01-08",
+                    totalTokens: 1_200_000,
+                    models: [
+                      { model: "claude-sonnet-4-5-20250929", totalTokens: 760_000 },
+                      { model: "gpt-5.3-codex", totalTokens: 440_000 },
+                    ],
+                  },
+                ],
+              },
+            ],
+            limited: false,
+            limitedReasons: [],
+          },
           models: [
             {
               model: "claude-sonnet-4-5-20250929",

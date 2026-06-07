@@ -1163,6 +1163,44 @@ describe("codex-adapter-browser-message-controller thread routing", () => {
     expect(session.state.codex_token_details.modelContextWindow).toBe(3_027_778);
   });
 
+  it("records timestamped Codex token usage samples from session updates", async () => {
+    // The workspace histogram cannot safely backfill Codex history from the
+    // latest cumulative total alone, so future updates must persist samples.
+    const session = makeSession();
+    session.state.model = "gpt-5.5";
+    const broadcasts: BrowserIncomingMessage[] = [];
+    const deps = makeDeps(broadcasts);
+
+    await handleCodexAdapterBrowserMessage(
+      session,
+      {
+        type: "session_update",
+        session: {
+          backend_type: "codex",
+          codex_token_details: {
+            totalTokens: 1_200_000,
+            inputTokens: 1_150_000,
+            outputTokens: 50_000,
+            cachedInputTokens: 930_000,
+            reasoningOutputTokens: 2_000,
+            modelContextWindow: 258_400,
+          },
+        },
+      } as BrowserIncomingMessage,
+      deps,
+    );
+
+    expect(session.state.token_usage_samples).toEqual([
+      expect.objectContaining({
+        backend: "codex",
+        model: "gpt-5.5",
+        totalTokens: 1_200_000,
+        codexModelAttributionLimited: true,
+      }),
+    ]);
+    expect(session.state.token_usage_samples?.[0].timestamp).toEqual(expect.any(Number));
+  });
+
   it("detects only the scoped Codex context-window exhaustion wording", () => {
     expect(
       isCodexContextWindowExhaustionMessage(
