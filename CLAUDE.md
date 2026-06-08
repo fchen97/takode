@@ -329,6 +329,8 @@ Takode was originally forked from [The-Vibe-Company/companion](https://github.co
 
 Git worktrees are the preferred isolation model for this project. Container support remains available for compatibility, but new workflow guidance should continue to prioritize worktree-based development.
 
+For Takode repository push, publish, and remote-branch operations, use the user's personal GitHub account rather than the default work GitHub account. Keep this scoped to Takode: other repositories should continue using the default work GitHub account unless their own repo instructions say otherwise. Do not record or expose credential contents, private key paths, tokens, or repo-local Git config values when applying this policy.
+
 ## Key Architectural Principles
 (please keep these updated as you work on the codebase)
 
@@ -393,8 +395,8 @@ git checkout -b fix/short-description (commitzen)
 git add <files>
 git commit -m "fix(scope): short summary" (commitzen)
 
-# 3) Push and set upstream
-git push -u origin fix/short-description
+# 3) Push and set upstream using the Takode personal-account remote policy
+git push -u <personal-remote> fix/short-description
 
 # 4) Create PR (title should follow commitzen style)
 gh pr create --base main --head fix/short-description --title "fix(scope): short summary"
