@@ -25,6 +25,8 @@ The Takode server symlinks project skills into global skill directories at start
 
 Global skills are auto-discovered by every session and can be hard to remove once installed. Avoid adding global skills for context-dependent instructions. Prefer repo instruction files in known locations, then inject or reference those exact file paths only for the agents that need that context.
 
+For Takode-wide cluster usage, runbook, or agent/skill documentation work, first look for any local/private cluster docs outside this tracked repository. Treat those docs as optional local context that may not exist on every machine, and keep tracked repo guidance generic. Do not copy sensitive cluster details into tracked files.
+
 ### Design Decisions as Skills
 
 For Takode repo work only, leaders should proactively propose focused repo-level design-principle skills when a user describes reusable guidance or when repeated failures suggest codified guidance would prevent recurrence. These skills should explain the principle, motivation, and practical application. Their frontmatter descriptions must clearly state when future agents should read them, using concrete trigger terms rather than vague names.
