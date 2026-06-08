@@ -67,6 +67,7 @@ import { applySessionLaunchConfigPatch, type SessionLaunchConfigPatch } from "./
 import { isActivePublicOrchestratorCreator } from "./codex-worker-create-role.js";
 import { applyCodexSessionIdentity, appendUniqueCliSessionId } from "./codex-launcher-session-state.js";
 import type { CodexInstructionSnapshot } from "./codex-adapter-types.js";
+import { composePrivateDefaultInstructions } from "./private-instructions.js";
 
 export { stripInternalLauncherSessionState, type SdkSessionInfo } from "./session-info.js";
 export type { LaunchOptions } from "./cli-launcher-options.js";
@@ -873,6 +874,7 @@ export class CliLauncher {
       modelAuthority: info.modelAuthority,
       codexMultiAgentVersion: info.codexMultiAgentVersion,
       env: envWithSessionId,
+      extraInstructions: await composePrivateDefaultInstructions(options.extraInstructions),
     };
 
     // Write session-auth file so takode/quest CLIs can authenticate when env vars are missing
@@ -1100,7 +1102,7 @@ export class CliLauncher {
     try {
       const bt = info.backendType ?? "claude-sdk";
 
-      const extraInstructions = this.relaunchExtraInstructions(info, bt);
+      const extraInstructions = await composePrivateDefaultInstructions(this.relaunchExtraInstructions(info, bt));
 
       switch (bt) {
         case "codex":
