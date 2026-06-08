@@ -41,6 +41,7 @@ import { normalizeCodexLeaderCompactionMode } from "../shared/codex-leader-compa
 import { normalizeCodexMultiAgentVersion } from "../shared/codex-multi-agent-version.js";
 import { applySessionLaunchConfigPatch, type SessionLaunchConfigPatch } from "./session-launch-config.js";
 import { isActivePublicOrchestratorCreator } from "./codex-worker-create-role.js";
+import { loadPrivateDefaultInstructions } from "./private-instructions.js";
 
 export { stripInternalLauncherSessionState, type SdkSessionInfo } from "./session-info.js";
 export type { LaunchOptions } from "./cli-launcher-options.js";
@@ -671,6 +672,7 @@ export class CliLauncher {
       modelAuthority: info.modelAuthority,
       codexMultiAgentVersion: info.codexMultiAgentVersion,
       env: envWithSessionId,
+      extraInstructions: await this.composeExtraInstructions(options.extraInstructions),
     };
 
     // Write session-auth file so takode/quest CLIs can authenticate when env vars are missing
@@ -855,9 +857,10 @@ export class CliLauncher {
       // Re-derive orchestrator guardrails for relaunched sessions.
       // extraInstructions is not persisted; regenerate from the isOrchestrator flag
       // so relaunched leaders retain the full orchestration system prompt.
-      const extraInstructions = info.isOrchestrator
+      const relaunchExtraInstructions = info.isOrchestrator
         ? this.getOrchestratorGuardrails(bt)
         : (info.codexWorkerV2Cutover?.oneShotExtraInstructions ?? undefined);
+      const extraInstructions = await this.composeExtraInstructions(relaunchExtraInstructions);
 
       switch (bt) {
         case "codex":
@@ -955,6 +958,14 @@ export class CliLauncher {
    */
   getStartingSessions(): SdkSessionInfo[] {
     return Array.from(this.sessions.values()).filter((s) => s.state === "starting");
+  }
+
+  private async composeExtraInstructions(extraInstructions?: string): Promise<string | undefined> {
+    const privateDefaultInstructions = await loadPrivateDefaultInstructions();
+    const combined = [privateDefaultInstructions, extraInstructions]
+      .filter((value): value is string => Boolean(value))
+      .join("\n\n");
+    return combined || undefined;
   }
 
   private spawnCLI(
