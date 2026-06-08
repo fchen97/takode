@@ -344,6 +344,7 @@ beforeEach(() => {
   });
   delete process.env.COMPANION_CONTAINER_SDK_HOST;
   delete process.env.COMPANION_FORCE_BYPASS_IN_CONTAINER;
+  delete process.env.TAKODE_PRIVATE_DOCS_DIR;
   tempDir = mkdtempSync(join(tmpdir(), "launcher-test-"));
   store = new SessionStore(tempDir);
   launcher = new CliLauncher(3456, { serverId: "test-server-id" });
@@ -430,5 +431,34 @@ describe("session identity injection", () => {
     expect(sysPrompt).toContain("Always try user-uploaded chat or Questmaster images directly first");
     expect(sysPrompt).toContain("Takode's `agent-browser screenshot` wrapper preserves the original");
     expect(sysPrompt).toContain("Do not recompress paths already containing `.takode-agent.`");
+  });
+
+  it("injects configured private default instructions into the system prompt", async () => {
+    // Private guidance is loaded through the launcher, not a repo skill, so it is default-on for new sessions.
+    process.env.TAKODE_PRIVATE_DOCS_DIR = "/tmp/.companion/private-docs";
+    mockExistsSync.mockImplementation((path) =>
+      [
+        "/tmp/.companion/private-docs/default-instructions.json",
+        "/tmp/.companion/private-docs/dangerous-operation-safeguard.md",
+      ].includes(String(path)),
+    );
+    mockReadFileSync.mockImplementation((path) => {
+      if (String(path).endsWith("default-instructions.json")) {
+        return JSON.stringify({ include: ["dangerous-operation-safeguard.md"] });
+      }
+      return "PRIVATE_DANGEROUS_OPERATION_MARKER";
+    });
+
+    await launcher.launch({ cwd: "/tmp/project", extraInstructions: "SESSION_EXTRA_MARKER" });
+
+    const [cmdAndArgs] = mockSpawn.mock.calls[0];
+    const sysPromptIdx = cmdAndArgs.indexOf("--append-system-prompt");
+    expect(sysPromptIdx).toBeGreaterThan(-1);
+    const sysPrompt = String(cmdAndArgs[sysPromptIdx + 1] ?? "");
+    expect(sysPrompt).toContain("## Private Default Instructions");
+    expect(sysPrompt).toContain("PRIVATE_DANGEROUS_OPERATION_MARKER");
+    expect(sysPrompt.indexOf("PRIVATE_DANGEROUS_OPERATION_MARKER")).toBeLessThan(
+      sysPrompt.indexOf("SESSION_EXTRA_MARKER"),
+    );
   });
 });

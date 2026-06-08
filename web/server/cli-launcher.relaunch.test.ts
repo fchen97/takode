@@ -352,6 +352,7 @@ beforeEach(() => {
   });
   delete process.env.COMPANION_CONTAINER_SDK_HOST;
   delete process.env.COMPANION_FORCE_BYPASS_IN_CONTAINER;
+  delete process.env.TAKODE_PRIVATE_DOCS_DIR;
   tempDir = mkdtempSync(join(tmpdir(), "launcher-test-"));
   store = new SessionStore(tempDir);
   launcher = new CliLauncher(3456, { serverId: "test-server-id", memorySessionSpaceSlug: "Takode" });
@@ -1227,5 +1228,51 @@ describe("relaunch", () => {
     const sysPrompt = relaunchCmd[sysPromptIdx + 1] as string;
     expect(sysPrompt).not.toContain("Quest Journey");
     expect(sysPrompt).not.toContain("Code Review");
+  });
+
+  it("re-injects private default instructions on relaunch", async () => {
+    // Relaunch reconstructs launch options, so private defaults must be reloaded instead of relying on persisted extras.
+    process.env.TAKODE_PRIVATE_DOCS_DIR = "/tmp/.companion/private-docs";
+    mockExistsSync.mockImplementation((path) =>
+      [
+        "/tmp/.companion/private-docs/default-instructions.json",
+        "/tmp/.companion/private-docs/dangerous-operation-safeguard.md",
+      ].includes(String(path)),
+    );
+    mockReadFileSync.mockImplementation((path) => {
+      if (String(path).endsWith("default-instructions.json")) {
+        return JSON.stringify({ include: ["dangerous-operation-safeguard.md"] });
+      }
+      return "PRIVATE_RELAUNCH_DANGEROUS_OPERATION_MARKER";
+    });
+
+    let resolveFirst: (code: number) => void;
+    const firstProc = {
+      pid: 12345,
+      kill: vi.fn(() => {
+        resolveFirst(0);
+      }),
+      exited: new Promise<number>((r) => {
+        resolveFirst = r;
+      }),
+      stdout: null,
+      stderr: null,
+    };
+    mockSpawn.mockReturnValueOnce(firstProc);
+
+    await launcher.launch({ cwd: "/tmp/project" });
+    launcher.setCLISessionId("test-session-id", "cli-worker-id");
+
+    const secondProc = createMockProc(54321);
+    mockSpawn.mockReturnValueOnce(secondProc);
+    const result = await launcher.relaunch("test-session-id");
+    expect(result).toEqual({ ok: true });
+
+    const [relaunchCmd] = mockSpawn.mock.calls[1];
+    const sysPromptIdx = relaunchCmd.indexOf("--append-system-prompt");
+    expect(sysPromptIdx).toBeGreaterThan(-1);
+    const sysPrompt = relaunchCmd[sysPromptIdx + 1] as string;
+    expect(sysPrompt).toContain("## Private Default Instructions");
+    expect(sysPrompt).toContain("PRIVATE_RELAUNCH_DANGEROUS_OPERATION_MARKER");
   });
 });

@@ -43,6 +43,7 @@ import { applySessionLaunchConfigPatch, type SessionLaunchConfigPatch } from "./
 import { isActivePublicOrchestratorCreator } from "./codex-worker-create-role.js";
 import { applyCodexSessionIdentity, appendUniqueCliSessionId } from "./codex-launcher-session-state.js";
 import type { CodexInstructionSnapshot } from "./codex-adapter-types.js";
+import { composePrivateDefaultInstructions } from "./private-instructions.js";
 
 export { stripInternalLauncherSessionState, type SdkSessionInfo } from "./session-info.js";
 export type { LaunchOptions } from "./cli-launcher-options.js";
@@ -673,6 +674,7 @@ export class CliLauncher {
       modelAuthority: info.modelAuthority,
       codexMultiAgentVersion: info.codexMultiAgentVersion,
       env: envWithSessionId,
+      extraInstructions: await composePrivateDefaultInstructions(options.extraInstructions),
     };
 
     // Write session-auth file so takode/quest CLIs can authenticate when env vars are missing
@@ -857,9 +859,10 @@ export class CliLauncher {
       // Re-derive orchestrator guardrails for relaunched sessions.
       // extraInstructions is not persisted; regenerate from the isOrchestrator flag
       // so relaunched leaders retain the full orchestration system prompt.
-      const extraInstructions = info.isOrchestrator
+      const relaunchExtraInstructions = info.isOrchestrator
         ? this.getOrchestratorGuardrails(bt)
         : (info.codexWorkerV2Cutover?.oneShotExtraInstructions ?? undefined);
+      const extraInstructions = await composePrivateDefaultInstructions(relaunchExtraInstructions);
 
       switch (bt) {
         case "codex":
