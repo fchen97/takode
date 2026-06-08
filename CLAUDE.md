@@ -30,6 +30,8 @@ A new skill is a project skill unless it belongs in the list. Add it to `GLOBAL_
 
 The canonical source is `.claude/skills/<slug>/`. Give a project skill a relative link `.agents/skills/<slug> -> ../../.claude/skills/<slug>` so Codex finds it too; use a real `.agents/skills/<slug>/` folder only when a distinct non-Claude source is needed (the global install prefers it for `~/.agents/skills/` and otherwise falls back to `.claude/skills/`). A skill that exists only under `.agents/skills/` never reaches Claude sessions. Legacy `.codex/skills/` content is compatibility-only and may be migrated into `.agents`; do not add skills there.
 
+For Takode-wide cluster usage, runbook, or agent/skill documentation work, first look for any local/private cluster docs outside this tracked repository. Treat those docs as optional local context that may not exist on every machine, and keep tracked repo guidance generic. Do not copy sensitive cluster details into tracked files.
+
 ### Design Decisions as Skills
 
 For Takode repo work only, leaders should proactively propose focused repo-level design-principle skills when a user describes reusable guidance or when repeated failures suggest codified guidance would prevent recurrence. These skills should explain the principle, motivation, and practical application. Their frontmatter descriptions must clearly state when future agents should read them, using concrete trigger terms rather than vague names.
