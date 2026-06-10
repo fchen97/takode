@@ -155,6 +155,27 @@ describe("buildCompanionInstructions", () => {
     expect(result).toContain("Non-Memory phases should not add routine `memory update not needed` statements");
   });
 
+  it("includes explicit Codex-created memory discovery and privacy guidance", () => {
+    const result = buildCompanionInstructions({ sessionNum: 42, backend: "codex" });
+
+    // Codex memory should be discoverable by agents, but still optional and
+    // visibly inspected rather than silently copied into Takode context.
+    expect(result).toContain("Codex-created memory is a separate optional context source");
+    expect(result).toContain("When a task mentions Codex memory");
+    expect(result).toContain("Prefer user-provided paths first");
+    expect(result).toContain("~/.codex/memories/");
+    expect(result).toContain("~/.codex/memories/MEMORY.md");
+    expect(result).toContain("~/.codex/memories/memory_summary.md");
+    expect(result).toContain("~/.codex/memories/raw_memories.md");
+    expect(result).toContain("~/.codex/AGENTS.md");
+    expect(result).toContain("session-scoped `CODEX_HOME`");
+    expect(result).toContain("the user's global Codex memory");
+    expect(result).toContain("Absence is normal and should be reported briefly");
+    expect(result).toContain("read it only through visible tool calls");
+    expect(result).toContain("never bulk-copy local/private Codex memory");
+    expect(result).toContain("Do not migrate or write Codex memory unless the user explicitly asks");
+  });
+
   it("includes worktree guardrails when worktree is provided", () => {
     const result = buildCompanionInstructions({
       worktree: { branch: "test-branch", repoRoot: "/repo" },
