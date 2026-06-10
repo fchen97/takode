@@ -144,7 +144,14 @@ function getRetainContextWhenHidden() {
     .get("takodePrototype.retainContextWhenHidden", true);
 }
 
+function shouldUsePortMappings() {
+  return typeof vscode.env.remoteName === "string" && vscode.env.remoteName.length > 0;
+}
+
 function getPortMappings(baseUrl) {
+  if (!shouldUsePortMappings()) {
+    return [];
+  }
   const url = new URL(baseUrl);
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     return [];
@@ -160,9 +167,10 @@ function getPortMappings(baseUrl) {
 }
 
 function applyWebviewOptions(panel, baseUrl) {
+  const portMapping = getPortMappings(baseUrl);
   panel.webview.options = {
     enableScripts: true,
-    portMapping: getPortMappings(baseUrl),
+    ...(portMapping.length > 0 ? { portMapping } : {}),
   };
 }
 

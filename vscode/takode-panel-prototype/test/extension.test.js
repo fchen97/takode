@@ -76,6 +76,7 @@ function loadExtensionHarness(options = {}) {
   const vscodeMock = {
     env: {
       sessionId: "",
+      remoteName: options.remoteName,
       asExternalUri: async (uri) => {
         const raw = uri?.toString?.() || String(uri);
         if (raw === "http://localhost:3456/") {
@@ -345,6 +346,45 @@ test("background selection sync POSTs to forwarded endpoints after URL resolutio
 
     assert.ok(postUrls.includes("https://forwarded.example/takode/api/vscode/selection"));
     assert.ok(postUrls.includes("https://forwarded.example/takode/api/vscode/windows"));
+  } finally {
+    harness.restore();
+  }
+});
+
+test("local panel does not request webview port mapping for Takode ports", async () => {
+  const harness = loadExtensionHarness();
+  try {
+    const context = { subscriptions: [] };
+    harness.extension.activate(context);
+
+    const openPanel = harness.handlers.commands.get("takodePrototype.openPanel");
+    assert.equal(typeof openPanel, "function");
+    openPanel();
+
+    assert.equal(harness.createdPanels.length, 1);
+    assert.deepEqual(harness.createdPanels[0].webview.options, {
+      enableScripts: true,
+    });
+  } finally {
+    harness.restore();
+  }
+});
+
+test("remote panel keeps webview port mapping for forwarded localhost access", async () => {
+  const harness = loadExtensionHarness({ remoteName: "ssh-remote" });
+  try {
+    const context = { subscriptions: [] };
+    harness.extension.activate(context);
+
+    const openPanel = harness.handlers.commands.get("takodePrototype.openPanel");
+    assert.equal(typeof openPanel, "function");
+    openPanel();
+
+    assert.equal(harness.createdPanels.length, 1);
+    assert.deepEqual(harness.createdPanels[0].webview.options, {
+      enableScripts: true,
+      portMapping: [{ webviewPort: 3456, extensionHostPort: 3456 }],
+    });
   } finally {
     harness.restore();
   }
