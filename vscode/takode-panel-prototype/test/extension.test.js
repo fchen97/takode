@@ -92,7 +92,12 @@ function loadExtensionHarness(options = {}) {
     workspace: {
       workspaceFolders: [],
       getConfiguration: () => ({
-        get: (_key, defaultValue) => defaultValue,
+        get: (key, defaultValue) => {
+          if (Object.prototype.hasOwnProperty.call(options.configuration || {}, key)) {
+            return options.configuration[key];
+          }
+          return defaultValue;
+        },
       }),
       asRelativePath: (uri) => path.relative("/workspace/project", uri.fsPath).replace(/\\/g, "/"),
       onDidChangeWorkspaceFolders: (cb) => {
@@ -370,8 +375,32 @@ test("local panel does not request webview port mapping for Takode ports", async
   }
 });
 
-test("remote panel keeps webview port mapping for forwarded localhost access", async () => {
+test("remote panel does not request webview port mapping by default", async () => {
   const harness = loadExtensionHarness({ remoteName: "ssh-remote" });
+  try {
+    const context = { subscriptions: [] };
+    harness.extension.activate(context);
+
+    const openPanel = harness.handlers.commands.get("takodePrototype.openPanel");
+    assert.equal(typeof openPanel, "function");
+    openPanel();
+
+    assert.equal(harness.createdPanels.length, 1);
+    assert.deepEqual(harness.createdPanels[0].webview.options, {
+      enableScripts: true,
+    });
+  } finally {
+    harness.restore();
+  }
+});
+
+test("remote panel can opt in to webview port mapping", async () => {
+  const harness = loadExtensionHarness({
+    remoteName: "ssh-remote",
+    configuration: {
+      "takodePrototype.enableWebviewPortMapping": true,
+    },
+  });
   try {
     const context = { subscriptions: [] };
     harness.extension.activate(context);

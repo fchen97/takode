@@ -145,7 +145,9 @@ function getRetainContextWhenHidden() {
 }
 
 function shouldUsePortMappings() {
-  return typeof vscode.env.remoteName === "string" && vscode.env.remoteName.length > 0;
+  return vscode.workspace
+    .getConfiguration()
+    .get("takodePrototype.enableWebviewPortMapping", false);
 }
 
 function getPortMappings(baseUrl) {
