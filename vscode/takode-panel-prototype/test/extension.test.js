@@ -36,7 +36,6 @@ function loadExtensionHarness(options = {}) {
   const createdPanels = [];
   const executeCommandCalls = [];
   const openTextDocumentCalls = [];
-  const asExternalUriCalls = [];
   let selectionSyncOptions = null;
   const activeEditor = createEditor("/workspace/project/web/src/App.tsx");
   const originalFetch = global.fetch;
@@ -80,7 +79,6 @@ function loadExtensionHarness(options = {}) {
       remoteName: options.remoteName,
       asExternalUri: async (uri) => {
         const raw = uri?.toString?.() || String(uri);
-        asExternalUriCalls.push(raw);
         if (raw === "http://localhost:3456/") {
           return { toString: () => "https://forwarded.example/takode/" };
         }
@@ -272,7 +270,6 @@ function loadExtensionHarness(options = {}) {
     executeCommandCalls,
     openTextDocumentCalls,
     fetchCalls,
-    asExternalUriCalls,
     getSelectionSyncOptions: () => selectionSyncOptions,
     restore,
     activeEditor,
@@ -281,7 +278,7 @@ function loadExtensionHarness(options = {}) {
 
 test("package.json includes an unconditional activation fallback for panel-free background sync", () => {
   const packageJson = JSON.parse(fs.readFileSync(path.resolve(__dirname, "../package.json"), "utf8"));
-  assert.deepEqual(packageJson.extensionKind, ["ui", "workspace"]);
+  assert.deepEqual(packageJson.extensionKind, ["ui"]);
   assert.ok(packageJson.activationEvents.includes("*"));
   assert.deepEqual(
     packageJson.activationEvents.filter((event) => event !== "*"),
@@ -321,7 +318,7 @@ test("background selection sync publishes even when the Takode panel has never b
   }
 });
 
-test("background selection sync avoids VS Code URI forwarding by default", async () => {
+test("background selection sync does not request VS Code URI forwarding", async () => {
   const harness = loadExtensionHarness();
   try {
     const context = { subscriptions: [] };
@@ -334,59 +331,6 @@ test("background selection sync avoids VS Code URI forwarding by default", async
       "http://localhost:3456/",
       "http://localhost:5174/",
     ]);
-    assert.deepEqual(harness.asExternalUriCalls, []);
-  } finally {
-    harness.restore();
-  }
-});
-
-test("background selection sync can opt in to VS Code-forwarded URLs for panel-free publishing", async () => {
-  const harness = loadExtensionHarness({
-    configuration: {
-      "takodePrototype.enableRemoteUriResolution": true,
-    },
-  });
-  try {
-    const context = { subscriptions: [] };
-    harness.extension.activate(context);
-    await new Promise((resolve) => setImmediate(resolve));
-
-    const selectionSyncOptions = harness.getSelectionSyncOptions();
-    assert.ok(selectionSyncOptions);
-    assert.deepEqual(selectionSyncOptions.getBaseUrls(), [
-      "http://localhost:3456/",
-      "http://localhost:5174/",
-      "https://forwarded.example/takode/",
-      "https://forwarded.example/takode-dev/",
-    ]);
-    assert.deepEqual(harness.asExternalUriCalls, [
-      "http://localhost:3456/",
-      "http://localhost:5174/",
-    ]);
-  } finally {
-    harness.restore();
-  }
-});
-
-test("background selection sync POSTs to forwarded endpoints after opt-in URL resolution", async () => {
-  const harness = loadExtensionHarness({
-    useRealSelectionSync: true,
-    configuration: {
-      "takodePrototype.enableRemoteUriResolution": true,
-    },
-  });
-  try {
-    const context = { subscriptions: [] };
-    harness.extension.activate(context);
-    await new Promise((resolve) => setImmediate(resolve));
-    await new Promise((resolve) => setImmediate(resolve));
-
-    const postUrls = harness.fetchCalls
-      .filter((call) => call.options?.method === "POST")
-      .map((call) => call.url);
-
-    assert.ok(postUrls.includes("https://forwarded.example/takode/api/vscode/selection"));
-    assert.ok(postUrls.includes("https://forwarded.example/takode/api/vscode/windows"));
   } finally {
     harness.restore();
   }
@@ -424,31 +368,6 @@ test("remote panel does not request webview port mapping by default", async () =
     assert.equal(harness.createdPanels.length, 1);
     assert.deepEqual(harness.createdPanels[0].webview.options, {
       enableScripts: true,
-    });
-  } finally {
-    harness.restore();
-  }
-});
-
-test("remote panel can opt in to webview port mapping", async () => {
-  const harness = loadExtensionHarness({
-    remoteName: "ssh-remote",
-    configuration: {
-      "takodePrototype.enableWebviewPortMapping": true,
-    },
-  });
-  try {
-    const context = { subscriptions: [] };
-    harness.extension.activate(context);
-
-    const openPanel = harness.handlers.commands.get("takodePrototype.openPanel");
-    assert.equal(typeof openPanel, "function");
-    openPanel();
-
-    assert.equal(harness.createdPanels.length, 1);
-    assert.deepEqual(harness.createdPanels[0].webview.options, {
-      enableScripts: true,
-      portMapping: [{ webviewPort: 3456, extensionHostPort: 3456 }],
     });
   } finally {
     harness.restore();

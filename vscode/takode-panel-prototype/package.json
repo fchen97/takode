@@ -7,8 +7,7 @@
   "publisher": "takode-local",
   "private": true,
   "extensionKind": [
-    "ui",
-    "workspace"
+    "ui"
   ],
   "engines": {
     "vscode": "^1.95.0"
@@ -62,16 +61,6 @@
           "type": "boolean",
           "default": true,
           "description": "Keep the Takode iframe alive when the panel is hidden so the existing web app can retain its in-memory UI state."
-        },
-        "takodePrototype.enableWebviewPortMapping": {
-          "type": "boolean",
-          "default": false,
-          "description": "Explicitly request VS Code webview port mappings for localhost Takode URLs. Leave disabled for local Takode because VS Code will bind the same local ports and can shadow the running server."
-        },
-        "takodePrototype.enableRemoteUriResolution": {
-          "type": "boolean",
-          "default": false,
-          "description": "Explicitly resolve Takode localhost URLs through VS Code Remote URI forwarding. Leave disabled for local Takode because Remote SSH forwarding can bind and shadow the same local ports."
         }
       }
     }
