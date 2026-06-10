@@ -7,8 +7,8 @@
   "publisher": "takode-local",
   "private": true,
   "extensionKind": [
-    "workspace",
-    "ui"
+    "ui",
+    "workspace"
   ],
   "engines": {
     "vscode": "^1.95.0"
@@ -51,12 +51,12 @@
         "takodePrototype.productionBaseUrl": {
           "type": "string",
           "default": "http://localhost:3456",
-          "description": "Takode production/server URL to render in the default panel. In Remote SSH, localhost is resolved on the workspace machine via VS Code's forwarded URI handling."
+          "description": "Takode production/server URL to render in the default panel. Defaults to the local Takode server."
         },
         "takodePrototype.devBaseUrl": {
           "type": "string",
           "default": "http://localhost:5174",
-          "description": "Takode dev server URL to render in the dev panel. In Remote SSH, localhost is resolved on the workspace machine via VS Code's forwarded URI handling."
+          "description": "Takode dev server URL to render in the dev panel. Defaults to the local Vite dev server."
         },
         "takodePrototype.retainContextWhenHidden": {
           "type": "boolean",
@@ -67,6 +67,11 @@
           "type": "boolean",
           "default": false,
           "description": "Explicitly request VS Code webview port mappings for localhost Takode URLs. Leave disabled for local Takode because VS Code will bind the same local ports and can shadow the running server."
+        },
+        "takodePrototype.enableRemoteUriResolution": {
+          "type": "boolean",
+          "default": false,
+          "description": "Explicitly resolve Takode localhost URLs through VS Code Remote URI forwarding. Leave disabled for local Takode because Remote SSH forwarding can bind and shadow the same local ports."
         }
       }
     }

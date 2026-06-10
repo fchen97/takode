@@ -36,6 +36,7 @@ function loadExtensionHarness(options = {}) {
   const createdPanels = [];
   const executeCommandCalls = [];
   const openTextDocumentCalls = [];
+  const asExternalUriCalls = [];
   let selectionSyncOptions = null;
   const activeEditor = createEditor("/workspace/project/web/src/App.tsx");
   const originalFetch = global.fetch;
@@ -79,6 +80,7 @@ function loadExtensionHarness(options = {}) {
       remoteName: options.remoteName,
       asExternalUri: async (uri) => {
         const raw = uri?.toString?.() || String(uri);
+        asExternalUriCalls.push(raw);
         if (raw === "http://localhost:3456/") {
           return { toString: () => "https://forwarded.example/takode/" };
         }
@@ -270,6 +272,7 @@ function loadExtensionHarness(options = {}) {
     executeCommandCalls,
     openTextDocumentCalls,
     fetchCalls,
+    asExternalUriCalls,
     getSelectionSyncOptions: () => selectionSyncOptions,
     restore,
     activeEditor,
@@ -278,6 +281,7 @@ function loadExtensionHarness(options = {}) {
 
 test("package.json includes an unconditional activation fallback for panel-free background sync", () => {
   const packageJson = JSON.parse(fs.readFileSync(path.resolve(__dirname, "../package.json"), "utf8"));
+  assert.deepEqual(packageJson.extensionKind, ["ui", "workspace"]);
   assert.ok(packageJson.activationEvents.includes("*"));
   assert.deepEqual(
     packageJson.activationEvents.filter((event) => event !== "*"),
@@ -317,8 +321,31 @@ test("background selection sync publishes even when the Takode panel has never b
   }
 });
 
-test("background selection sync includes forwarded VS Code URLs for panel-free publishing", async () => {
+test("background selection sync avoids VS Code URI forwarding by default", async () => {
   const harness = loadExtensionHarness();
+  try {
+    const context = { subscriptions: [] };
+    harness.extension.activate(context);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    const selectionSyncOptions = harness.getSelectionSyncOptions();
+    assert.ok(selectionSyncOptions);
+    assert.deepEqual(selectionSyncOptions.getBaseUrls(), [
+      "http://localhost:3456/",
+      "http://localhost:5174/",
+    ]);
+    assert.deepEqual(harness.asExternalUriCalls, []);
+  } finally {
+    harness.restore();
+  }
+});
+
+test("background selection sync can opt in to VS Code-forwarded URLs for panel-free publishing", async () => {
+  const harness = loadExtensionHarness({
+    configuration: {
+      "takodePrototype.enableRemoteUriResolution": true,
+    },
+  });
   try {
     const context = { subscriptions: [] };
     harness.extension.activate(context);
@@ -332,13 +359,22 @@ test("background selection sync includes forwarded VS Code URLs for panel-free p
       "https://forwarded.example/takode/",
       "https://forwarded.example/takode-dev/",
     ]);
+    assert.deepEqual(harness.asExternalUriCalls, [
+      "http://localhost:3456/",
+      "http://localhost:5174/",
+    ]);
   } finally {
     harness.restore();
   }
 });
 
-test("background selection sync POSTs to forwarded endpoints after URL resolution without opening the panel", async () => {
-  const harness = loadExtensionHarness({ useRealSelectionSync: true });
+test("background selection sync POSTs to forwarded endpoints after opt-in URL resolution", async () => {
+  const harness = loadExtensionHarness({
+    useRealSelectionSync: true,
+    configuration: {
+      "takodePrototype.enableRemoteUriResolution": true,
+    },
+  });
   try {
     const context = { subscriptions: [] };
     harness.extension.activate(context);
