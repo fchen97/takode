@@ -322,7 +322,12 @@ function activate(context) {
   const panelsByKind = new Map();
   outputChannel = vscode.window.createOutputChannel("Takode Prototype");
   context.subscriptions.push(outputChannel);
-  logDebug("activate");
+  logDebug("activate", { remoteName: vscode.env.remoteName || null });
+
+  if (typeof vscode.env.remoteName === "string" && vscode.env.remoteName.length > 0) {
+    logDebug("remote extension host detected; Takode prototype is disabled in Remote SSH windows");
+    return;
+  }
 
   const selectionSync = createSelectionSyncManager({
     fetchImpl: fetch,

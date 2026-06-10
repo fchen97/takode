@@ -355,20 +355,16 @@ test("local panel does not request webview port mapping for Takode ports", async
   }
 });
 
-test("remote panel does not request webview port mapping by default", async () => {
+test("remote extension host disables Takode prototype behavior", async () => {
   const harness = loadExtensionHarness({ remoteName: "ssh-remote" });
   try {
     const context = { subscriptions: [] };
     harness.extension.activate(context);
 
-    const openPanel = harness.handlers.commands.get("takodePrototype.openPanel");
-    assert.equal(typeof openPanel, "function");
-    openPanel();
-
-    assert.equal(harness.createdPanels.length, 1);
-    assert.deepEqual(harness.createdPanels[0].webview.options, {
-      enableScripts: true,
-    });
+    assert.equal(harness.handlers.commands.has("takodePrototype.openPanel"), false);
+    assert.equal(harness.handlers.commands.has("takodePrototype.openDevPanel"), false);
+    assert.equal(harness.createdPanels.length, 0);
+    assert.equal(harness.getSelectionSyncOptions(), null);
   } finally {
     harness.restore();
   }
