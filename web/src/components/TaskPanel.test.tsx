@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom";
 import {
   SESSION_NAVIGATION_PROJECTION,
@@ -1057,12 +1057,135 @@ describe("WorkspaceTokenUsageByModelView", () => {
 
     expect(screen.getByText("Workspace Tokens")).toBeInTheDocument();
     expect(screen.getAllByText("1.1M")).toHaveLength(2);
-    expect(screen.getAllByText("claude-sonnet")).toHaveLength(2);
+    expect(screen.getAllByText("claude-sonnet")).toHaveLength(3);
     expect(screen.getByText("input 300.0k · output 50.0k · cached 700.0k")).toBeInTheDocument();
     expect(screen.getByText("4 sessions")).toBeInTheDocument();
-    expect(screen.getByText("70")).toBeInTheDocument();
+    expect(screen.getAllByText("70").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByRole("button", { name: "2026-01-07: 70 tokens" })).toHaveAttribute("aria-pressed", "true");
     fireEvent.click(screen.getByText("30D"));
-    expect(screen.getByText("130")).toBeInTheDocument();
+    expect(screen.getAllByText("130").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByRole("button", { name: "2026-01-01: 130 tokens" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("selects a histogram day and renders exact daily totals by model", () => {
+    render(
+      <WorkspaceTokenUsageByModelView
+        summary={{
+          totalTokens: 4_184_100,
+          generatedAt: 1,
+          history: {
+            ranges: [
+              {
+                id: "week",
+                label: "Past week",
+                days: 7,
+                granularity: "day",
+                totalTokens: 932_000,
+                buckets: [
+                  {
+                    date: "2026-01-02",
+                    totalTokens: 90_000,
+                    models: [{ model: "gpt-5.3-codex", totalTokens: 90_000 }],
+                  },
+                  {
+                    date: "2026-01-05",
+                    totalTokens: 284_000,
+                    models: [
+                      { model: "claude-sonnet-4-5-20250929", totalTokens: 194_000 },
+                      { model: "gpt-5.3-codex", totalTokens: 90_000 },
+                    ],
+                  },
+                  { date: "2026-01-06", totalTokens: 0, models: [] },
+                ],
+              },
+              { id: "month", label: "Past month", days: 30, granularity: "day", totalTokens: 0, buckets: [] },
+            ],
+            limited: false,
+            limitedReasons: [],
+          },
+          models: [
+            {
+              model: "claude-sonnet-4-5-20250929",
+              totalTokens: 2_650_400,
+              inputTokens: 1_010_000,
+              outputTokens: 240_400,
+              cachedInputTokens: 1_400_000,
+              reasoningOutputTokens: 0,
+              sessionCount: 7,
+            },
+            {
+              model: "gpt-5.3-codex",
+              totalTokens: 1_533_700,
+              inputTokens: 470_000,
+              outputTokens: 183_700,
+              cachedInputTokens: 780_000,
+              reasoningOutputTokens: 100_000,
+              sessionCount: 3,
+            },
+          ],
+        }}
+      />,
+    );
+
+    const jan5 = screen.getByRole("button", { name: "2026-01-05: 284.0k tokens" });
+    jan5.focus();
+    expect(jan5).toHaveFocus();
+    fireEvent.click(jan5);
+
+    expect(jan5).toHaveAttribute("aria-pressed", "true");
+    const selectedDay = screen.getByTestId("workspace-token-selected-day");
+    expect(within(selectedDay).getByText("2026-01-05")).toBeInTheDocument();
+    expect(within(selectedDay).getByText("284.0k")).toBeInTheDocument();
+    expect(within(selectedDay).getByText("claude-sonnet-4-5-20250929")).toBeInTheDocument();
+    expect(within(selectedDay).getByText("194.0k")).toBeInTheDocument();
+    expect(within(selectedDay).getByText("gpt-5.3-codex")).toBeInTheDocument();
+    expect(within(selectedDay).getByText("90.0k")).toBeInTheDocument();
+  });
+
+  it("shows a clear selected-day empty state for zero-token buckets", () => {
+    render(
+      <WorkspaceTokenUsageByModelView
+        summary={{
+          totalTokens: 100,
+          generatedAt: 1,
+          history: {
+            ranges: [
+              {
+                id: "week",
+                label: "Past week",
+                days: 7,
+                granularity: "day",
+                totalTokens: 100,
+                buckets: [
+                  { date: "2026-01-06", totalTokens: 100, models: [{ model: "opus 4.7", totalTokens: 100 }] },
+                  { date: "2026-01-07", totalTokens: 0, models: [] },
+                ],
+              },
+              { id: "month", label: "Past month", days: 30, granularity: "day", totalTokens: 0, buckets: [] },
+            ],
+            limited: false,
+            limitedReasons: [],
+          },
+          models: [
+            {
+              model: "opus 4.7",
+              totalTokens: 100,
+              inputTokens: 80,
+              outputTokens: 20,
+              cachedInputTokens: 0,
+              reasoningOutputTokens: 0,
+              sessionCount: 1,
+            },
+          ],
+        }}
+      />,
+    );
+
+    const zeroDay = screen.getByRole("button", { name: "2026-01-07: 0 tokens" });
+    fireEvent.click(zeroDay);
+
+    expect(zeroDay).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByText("No recorded daily tokens for this day.")).toBeInTheDocument();
   });
 
   it("renders a limited-history state without fabricating histogram buckets", () => {

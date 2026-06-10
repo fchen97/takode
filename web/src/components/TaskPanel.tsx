@@ -370,6 +370,12 @@ function formatUsageDayLabel(date: string): string {
   return parsed.toLocaleDateString(undefined, { month: "numeric", day: "numeric" });
 }
 
+function formatUsageDayDetailLabel(date: string): string {
+  const parsed = new Date(`${date}T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) return date;
+  return parsed.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric" });
+}
+
 function rangeModelTotals(range: WorkspaceTokenUsageByModelSummary["history"]["ranges"][number]) {
   const totals = new Map<string, number>();
   for (const bucket of range.buckets) {
@@ -382,11 +388,27 @@ function rangeModelTotals(range: WorkspaceTokenUsageByModelSummary["history"]["r
     .sort((a, b) => b.totalTokens - a.totalTokens || a.model.localeCompare(b.model));
 }
 
+function defaultSelectedUsageBucket(range: WorkspaceTokenUsageByModelSummary["history"]["ranges"][number]) {
+  for (let index = range.buckets.length - 1; index >= 0; index -= 1) {
+    const bucket = range.buckets[index];
+    if (bucket && bucket.totalTokens > 0) return bucket;
+  }
+  return range.buckets.at(-1) ?? null;
+}
+
 function WorkspaceTokenUsageHistogram({ summary }: { summary: WorkspaceTokenUsageByModelSummary }) {
   const [selectedRangeId, setSelectedRangeId] = useState<"week" | "month">("week");
+  const [selectedBucketDate, setSelectedBucketDate] = useState<string | null>(null);
   const ranges = summary.history?.ranges ?? [];
   const selectedRange = ranges.find((range) => range.id === selectedRangeId) ?? ranges[0];
   const modelTotals = useMemo(() => (selectedRange ? rangeModelTotals(selectedRange) : []), [selectedRange]);
+  const selectedBucket = useMemo(() => {
+    if (!selectedRange) return null;
+    return (
+      selectedRange.buckets.find((bucket) => bucket.date === selectedBucketDate) ??
+      defaultSelectedUsageBucket(selectedRange)
+    );
+  }, [selectedBucketDate, selectedRange]);
   const colorByModel = useMemo(
     () =>
       new Map(
@@ -417,6 +439,7 @@ function WorkspaceTokenUsageHistogram({ summary }: { summary: WorkspaceTokenUsag
                 key={range.id}
                 type="button"
                 onClick={() => setSelectedRangeId(range.id)}
+                aria-pressed={selected}
                 className={`rounded px-2 py-0.5 text-[10px] font-medium transition-colors cursor-pointer ${
                   selected ? "bg-cc-primary/15 text-cc-primary" : "text-cc-muted hover:bg-cc-hover hover:text-cc-fg"
                 }`}
@@ -437,10 +460,23 @@ function WorkspaceTokenUsageHistogram({ summary }: { summary: WorkspaceTokenUsag
           >
             {selectedRange.buckets.map((bucket) => {
               const heightPct = Math.max(8, Math.round((bucket.totalTokens / maxBucketTotal) * 100));
-              const title = `${bucket.date}: ${formatTokenCount(bucket.totalTokens)}`;
+              const selected = bucket.date === selectedBucket?.date;
+              const title = `${bucket.date}: ${formatTokenCount(bucket.totalTokens)} tokens`;
               return (
-                <div key={bucket.date} className="flex min-w-0 flex-1 flex-col items-center gap-1" title={title}>
-                  <div className="flex h-14 w-full max-w-3 items-end overflow-hidden rounded-sm bg-cc-hover/70">
+                <button
+                  key={bucket.date}
+                  type="button"
+                  onClick={() => setSelectedBucketDate(bucket.date)}
+                  aria-label={title}
+                  aria-pressed={selected}
+                  className="group flex min-w-0 flex-1 cursor-pointer flex-col items-center gap-1 rounded-sm text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cc-primary/70"
+                  title={title}
+                >
+                  <div
+                    className={`flex h-14 w-full max-w-3 items-end overflow-hidden rounded-sm transition-colors ${
+                      selected ? "bg-cc-primary/20 ring-1 ring-cc-primary/70" : "bg-cc-hover/70 group-hover:bg-cc-hover"
+                    }`}
+                  >
                     {bucket.totalTokens > 0 && (
                       <div className="flex w-full flex-col-reverse" style={{ height: `${heightPct}%` }}>
                         {bucket.models.map((model) => (
@@ -460,10 +496,52 @@ function WorkspaceTokenUsageHistogram({ summary }: { summary: WorkspaceTokenUsag
                     bucket === selectedRange.buckets.at(-1)) && (
                     <span className="text-[9px] text-cc-muted tabular-nums">{formatUsageDayLabel(bucket.date)}</span>
                   )}
-                </div>
+                </button>
               );
             })}
           </div>
+          {selectedBucket && (
+            <div
+              className="border-t border-cc-border/50 pt-2"
+              data-testid="workspace-token-selected-day"
+              aria-live="polite"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-[10px] font-medium uppercase text-cc-muted">Selected day</div>
+                  <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
+                    <span className="text-[11px] font-medium text-cc-fg">
+                      {formatUsageDayDetailLabel(selectedBucket.date)}
+                    </span>
+                    <span className="font-mono-code text-[10px] text-cc-muted">{selectedBucket.date}</span>
+                  </div>
+                </div>
+                <span className="shrink-0 text-[11px] font-medium tabular-nums text-cc-fg">
+                  {formatTokenCount(selectedBucket.totalTokens)}
+                </span>
+              </div>
+              {selectedBucket.models.length > 0 ? (
+                <div className="mt-1.5 space-y-1">
+                  {selectedBucket.models.map((entry) => (
+                    <div key={entry.model} className="flex items-center justify-between gap-2 text-[10px]">
+                      <span className="inline-flex min-w-0 items-center gap-1 text-cc-muted">
+                        <span
+                          className="h-2 w-2 shrink-0 rounded-sm"
+                          style={{ backgroundColor: colorByModel.get(entry.model) ?? WORKSPACE_USAGE_SERIES_COLORS[0] }}
+                        />
+                        <span className="min-w-0 truncate font-mono-code">{entry.model}</span>
+                      </span>
+                      <span className="shrink-0 tabular-nums text-cc-fg">{formatTokenCount(entry.totalTokens)}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="mt-1.5 text-[10px] leading-snug text-cc-muted">
+                  No recorded daily tokens for this day.
+                </div>
+              )}
+            </div>
+          )}
           <div className="flex flex-wrap gap-x-2 gap-y-1">
             {modelTotals.slice(0, 5).map((entry) => (
               <span key={entry.model} className="inline-flex min-w-0 items-center gap-1 text-[10px] text-cc-muted">
