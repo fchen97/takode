@@ -76,6 +76,7 @@ function loadExtensionHarness(options = {}) {
   const vscodeMock = {
     env: {
       sessionId: "",
+      remoteName: options.remoteName,
       asExternalUri: async (uri) => {
         const raw = uri?.toString?.() || String(uri);
         if (raw === "http://localhost:3456/") {
@@ -91,7 +92,12 @@ function loadExtensionHarness(options = {}) {
     workspace: {
       workspaceFolders: [],
       getConfiguration: () => ({
-        get: (_key, defaultValue) => defaultValue,
+        get: (key, defaultValue) => {
+          if (Object.prototype.hasOwnProperty.call(options.configuration || {}, key)) {
+            return options.configuration[key];
+          }
+          return defaultValue;
+        },
       }),
       asRelativePath: (uri) => path.relative("/workspace/project", uri.fsPath).replace(/\\/g, "/"),
       onDidChangeWorkspaceFolders: (cb) => {
@@ -272,6 +278,7 @@ function loadExtensionHarness(options = {}) {
 
 test("package.json includes an unconditional activation fallback for panel-free background sync", () => {
   const packageJson = JSON.parse(fs.readFileSync(path.resolve(__dirname, "../package.json"), "utf8"));
+  assert.deepEqual(packageJson.extensionKind, ["ui"]);
   assert.ok(packageJson.activationEvents.includes("*"));
   assert.deepEqual(
     packageJson.activationEvents.filter((event) => event !== "*"),
@@ -311,7 +318,7 @@ test("background selection sync publishes even when the Takode panel has never b
   }
 });
 
-test("background selection sync includes forwarded VS Code URLs for panel-free publishing", async () => {
+test("background selection sync does not request VS Code URI forwarding", async () => {
   const harness = loadExtensionHarness();
   try {
     const context = { subscriptions: [] };
@@ -323,28 +330,41 @@ test("background selection sync includes forwarded VS Code URLs for panel-free p
     assert.deepEqual(selectionSyncOptions.getBaseUrls(), [
       "http://localhost:3456/",
       "http://localhost:5174/",
-      "https://forwarded.example/takode/",
-      "https://forwarded.example/takode-dev/",
     ]);
   } finally {
     harness.restore();
   }
 });
 
-test("background selection sync POSTs to forwarded endpoints after URL resolution without opening the panel", async () => {
-  const harness = loadExtensionHarness({ useRealSelectionSync: true });
+test("local panel does not request webview port mapping for Takode ports", async () => {
+  const harness = loadExtensionHarness();
   try {
     const context = { subscriptions: [] };
     harness.extension.activate(context);
-    await new Promise((resolve) => setImmediate(resolve));
-    await new Promise((resolve) => setImmediate(resolve));
 
-    const postUrls = harness.fetchCalls
-      .filter((call) => call.options?.method === "POST")
-      .map((call) => call.url);
+    const openPanel = harness.handlers.commands.get("takodePrototype.openPanel");
+    assert.equal(typeof openPanel, "function");
+    openPanel();
 
-    assert.ok(postUrls.includes("https://forwarded.example/takode/api/vscode/selection"));
-    assert.ok(postUrls.includes("https://forwarded.example/takode/api/vscode/windows"));
+    assert.equal(harness.createdPanels.length, 1);
+    assert.deepEqual(harness.createdPanels[0].webview.options, {
+      enableScripts: true,
+    });
+  } finally {
+    harness.restore();
+  }
+});
+
+test("remote extension host disables Takode prototype behavior", async () => {
+  const harness = loadExtensionHarness({ remoteName: "ssh-remote" });
+  try {
+    const context = { subscriptions: [] };
+    harness.extension.activate(context);
+
+    assert.equal(harness.handlers.commands.has("takodePrototype.openPanel"), false);
+    assert.equal(harness.handlers.commands.has("takodePrototype.openDevPanel"), false);
+    assert.equal(harness.createdPanels.length, 0);
+    assert.equal(harness.getSelectionSyncOptions(), null);
   } finally {
     harness.restore();
   }
