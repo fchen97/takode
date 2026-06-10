@@ -71,18 +71,7 @@ function getSelectionSyncBaseUrls() {
 
 async function refreshSelectionSyncBaseUrls() {
   const configuredBaseUrls = getConfiguredSelectionSyncBaseUrls();
-  const resolvedBaseUrls = await Promise.all(configuredBaseUrls.map(async (baseUrl) => {
-    try {
-      return (await vscode.env.asExternalUri(vscode.Uri.parse(baseUrl))).toString();
-    } catch (error) {
-      const text = error instanceof Error ? error.message : String(error);
-      logDebug("resolve selection sync base URL failed", { baseUrl, error: text });
-      return null;
-    }
-  }));
-  resolvedSelectionSyncBaseUrls = dedupeBaseUrls(
-    resolvedBaseUrls.filter((value) => typeof value === "string" && value),
-  );
+  resolvedSelectionSyncBaseUrls = [];
   logDebug("selection sync base URLs refreshed", {
     configuredBaseUrls,
     resolvedBaseUrls: resolvedSelectionSyncBaseUrls,
@@ -144,31 +133,15 @@ function getRetainContextWhenHidden() {
     .get("takodePrototype.retainContextWhenHidden", true);
 }
 
-function getPortMappings(baseUrl) {
-  const url = new URL(baseUrl);
-  if (url.protocol !== "http:" && url.protocol !== "https:") {
-    return [];
-  }
-  if (url.hostname !== "localhost") {
-    return [];
-  }
-  const port = Number(url.port || (url.protocol === "https:" ? "443" : "80"));
-  if (!Number.isFinite(port) || port <= 0) {
-    return [];
-  }
-  return [{ webviewPort: port, extensionHostPort: port }];
-}
-
-function applyWebviewOptions(panel, baseUrl) {
+function applyWebviewOptions(panel) {
   panel.webview.options = {
     enableScripts: true,
-    portMapping: getPortMappings(baseUrl),
   };
 }
 
 async function renderPanel(panel, kind, baseUrl) {
   const panelSpec = getPanelSpec(kind);
-  const resolvedBaseUrl = (await vscode.env.asExternalUri(vscode.Uri.parse(baseUrl))).toString();
+  const resolvedBaseUrl = baseUrl;
   panel.title = panelSpec.title;
   logDebug("renderPanel", { kind, baseUrl, resolvedBaseUrl });
   panel.webview.html = buildPanelHtml({
@@ -299,9 +272,7 @@ function attachPanel(panel, kind) {
     }
 
     if (message.type === "openExternal" && typeof message.url === "string") {
-      void vscode.env.asExternalUri(vscode.Uri.parse(message.url)).then((externalUri) => {
-        void vscode.env.openExternal(externalUri);
-      });
+      void vscode.env.openExternal(vscode.Uri.parse(message.url));
       return;
     }
 
@@ -351,7 +322,12 @@ function activate(context) {
   const panelsByKind = new Map();
   outputChannel = vscode.window.createOutputChannel("Takode Prototype");
   context.subscriptions.push(outputChannel);
-  logDebug("activate");
+  logDebug("activate", { remoteName: vscode.env.remoteName || null });
+
+  if (typeof vscode.env.remoteName === "string" && vscode.env.remoteName.length > 0) {
+    logDebug("remote extension host detected; Takode prototype is disabled in Remote SSH windows");
+    return;
+  }
 
   const selectionSync = createSelectionSyncManager({
     fetchImpl: fetch,
