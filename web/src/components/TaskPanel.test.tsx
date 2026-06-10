@@ -1188,6 +1188,77 @@ describe("WorkspaceTokenUsageByModelView", () => {
     expect(screen.getByText("No recorded daily tokens for this day.")).toBeInTheDocument();
   });
 
+  it("keeps a real 30-day histogram pointer-selectable with fixed day targets", () => {
+    const monthBuckets = Array.from({ length: 30 }, (_, index) => {
+      const day = index + 1;
+      return {
+        date: `2026-01-${String(day).padStart(2, "0")}`,
+        totalTokens: day * 10,
+        models: [{ model: "opus 4.7", totalTokens: day * 10 }],
+      };
+    });
+
+    render(
+      <WorkspaceTokenUsageByModelView
+        summary={{
+          totalTokens: 4_650,
+          generatedAt: 1,
+          history: {
+            ranges: [
+              {
+                id: "week",
+                label: "Past week",
+                days: 7,
+                granularity: "day",
+                totalTokens: 300,
+                buckets: monthBuckets.slice(-7),
+              },
+              {
+                id: "month",
+                label: "Past month",
+                days: 30,
+                granularity: "day",
+                totalTokens: 4_650,
+                buckets: monthBuckets,
+              },
+            ],
+            limited: false,
+            limitedReasons: [],
+          },
+          models: [
+            {
+              model: "opus 4.7",
+              totalTokens: 4_650,
+              inputTokens: 4_000,
+              outputTokens: 650,
+              cachedInputTokens: 0,
+              reasoningOutputTokens: 0,
+              sessionCount: 2,
+            },
+          ],
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("30D"));
+
+    const histogram = screen.getByTestId("workspace-token-histogram-days");
+    expect(histogram).toHaveClass("overflow-x-auto");
+    expect(screen.getAllByRole("button", { name: /2026-01-\d\d: \d+ tokens/ })).toHaveLength(30);
+
+    const jan15 = screen.getByRole("button", { name: "2026-01-15: 150 tokens" });
+    expect(jan15).toHaveClass("w-6", "shrink-0");
+    expect(jan15).not.toHaveClass("flex-1");
+
+    fireEvent.click(jan15);
+
+    expect(jan15).toHaveAttribute("aria-pressed", "true");
+    const selectedDay = screen.getByTestId("workspace-token-selected-day");
+    expect(within(selectedDay).getByText("2026-01-15")).toBeInTheDocument();
+    expect(within(selectedDay).getAllByText("150").length).toBeGreaterThanOrEqual(2);
+    expect(within(selectedDay).getByText("opus 4.7")).toBeInTheDocument();
+  });
+
   it("renders a limited-history state without fabricating histogram buckets", () => {
     render(
       <WorkspaceTokenUsageByModelView

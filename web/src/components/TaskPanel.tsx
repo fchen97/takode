@@ -424,6 +424,7 @@ function WorkspaceTokenUsageHistogram({ summary }: { summary: WorkspaceTokenUsag
   const maxBucketTotal = Math.max(1, ...selectedRange.buckets.map((bucket) => bucket.totalTokens));
   const hasDailyUsage = selectedRange.totalTokens > 0;
   const limitedReason = summary.history?.limitedReasons?.[0];
+  const usesScrollableDayStrip = selectedRange.buckets.length > 14;
 
   return (
     <div className="space-y-2 rounded-lg border border-cc-border/70 bg-cc-hover/20 px-2.5 py-2">
@@ -455,7 +456,10 @@ function WorkspaceTokenUsageHistogram({ summary }: { summary: WorkspaceTokenUsag
       {hasDailyUsage ? (
         <>
           <div
-            className="flex h-20 items-end gap-1 overflow-hidden"
+            className={`flex h-20 items-end ${
+              usesScrollableDayStrip ? "gap-0.5 overflow-x-auto overflow-y-hidden pb-1 pr-0.5" : "gap-1 overflow-hidden"
+            }`}
+            data-testid="workspace-token-histogram-days"
             aria-label={`${selectedRange.label} daily token histogram`}
           >
             {selectedRange.buckets.map((bucket) => {
@@ -469,7 +473,9 @@ function WorkspaceTokenUsageHistogram({ summary }: { summary: WorkspaceTokenUsag
                   onClick={() => setSelectedBucketDate(bucket.date)}
                   aria-label={title}
                   aria-pressed={selected}
-                  className="group flex min-w-0 flex-1 cursor-pointer flex-col items-center gap-1 rounded-sm text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cc-primary/70"
+                  className={`group flex cursor-pointer flex-col items-center gap-1 rounded-sm text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cc-primary/70 ${
+                    usesScrollableDayStrip ? "w-6 shrink-0" : "min-w-0 flex-1"
+                  }`}
                   title={title}
                 >
                   <div
