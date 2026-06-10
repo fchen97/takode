@@ -7,7 +7,6 @@
   "publisher": "takode-local",
   "private": true,
   "extensionKind": [
-    "workspace",
     "ui"
   ],
   "engines": {
@@ -51,12 +50,12 @@
         "takodePrototype.productionBaseUrl": {
           "type": "string",
           "default": "http://localhost:3456",
-          "description": "Takode production/server URL to render in the default panel. In Remote SSH, localhost is resolved on the workspace machine via VS Code's forwarded URI handling."
+          "description": "Takode production/server URL to render in the default panel. Defaults to the local Takode server."
         },
         "takodePrototype.devBaseUrl": {
           "type": "string",
           "default": "http://localhost:5174",
-          "description": "Takode dev server URL to render in the dev panel. In Remote SSH, localhost is resolved on the workspace machine via VS Code's forwarded URI handling."
+          "description": "Takode dev server URL to render in the dev panel. Defaults to the local Vite dev server."
         },
         "takodePrototype.retainContextWhenHidden": {
           "type": "boolean",
