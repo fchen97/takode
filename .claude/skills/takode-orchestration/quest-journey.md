@@ -138,3 +138,5 @@ quest feedback add q-N --text-file /tmp/phase.md --tldr-file /tmp/phase-tldr.md 
 Use phase-scoped inference when available, or explicit `--phase`, `--phase-position`, `--phase-occurrence`, `--phase-occurrence-id`, or `--journey-run` when needed. Keep phase notes useful and compressed: decisions, blockers, evidence, user choices, external state, residual risks, and next-phase handoff facts. Avoid file-by-file diff narration, long command transcripts, routine green-test lists, and repeated commit metadata.
 
 Final chat handoffs should point to the phase feedback index and include the concise outcome or verdict plus only urgent blockers, safety facts, or narrow phase-required exceptions.
+
+User-owned commit or handoff requests change commit ownership, not evidence requirements. Complete Work's required self-review and verification, plus any independently authorized review, before handing tracked work to the user unless the user explicitly changes those requirements.

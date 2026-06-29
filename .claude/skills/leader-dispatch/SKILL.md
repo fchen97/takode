@@ -237,6 +237,8 @@ After Alignment approval, Work is intentionally broader: the assigned worker may
 
 For recovery of an active Work occurrence, follow the canonical Work leader brief at `~/.companion/quest-journey-phases/work/leader.md`; it owns the complete rule, and recovery instructions must not narrow already-authorized Work.
 
+User-owned commit or handoff requests change who performs the final commit; they do not waive Work's required self-review and verification or any independent review already present in the authorized workflow. Preserve explicit user overrides that actually change those review requirements.
+
 ## Board Commands
 
 Routine dispatch usually needs only:
