@@ -66,6 +66,7 @@ import { isActivePublicOrchestratorCreator } from "./codex-worker-create-role.js
 import { applyCodexSessionIdentity, appendUniqueCliSessionId } from "./codex-launcher-session-state.js";
 import type { CodexInstructionSnapshot } from "./codex-adapter-types.js";
 import { composePrivateDefaultInstructions } from "./private-instructions.js";
+import { applyCodexSpawnMetadata, buildCodexSpawnLaunchInfo } from "./cli-launcher-codex-metadata.js";
 
 export { stripInternalLauncherSessionState, type SdkSessionInfo } from "./session-info.js";
 export type { LaunchOptions } from "./cli-launcher-options.js";
@@ -851,7 +852,9 @@ export class CliLauncher {
 
     // Write session-auth file so takode/quest CLIs can authenticate when env vars are missing
     // (e.g., after CLI relaunch). Fire-and-forget — non-blocking.
-    this.writeSessionAuthFile(cwd, sessionId, sessionAuthToken, this.port).catch(() => {});
+    if (!options.skipSessionAuthFile) {
+      this.writeSessionAuthFile(cwd, sessionId, sessionAuthToken, this.port).catch(() => {});
+    }
 
     switch (backendType) {
       case "codex":
@@ -1266,14 +1269,7 @@ export class CliLauncher {
       const codexOptions = info.hostId
         ? options
         : { ...options, codexBinary: options.codexBinary || machineSettingsFor(null).codexBinary || undefined };
-      const launchInfo = {
-        cwd: info.cwd,
-        cliSessionId: info.cliSessionId,
-        isOrchestrator: info.isOrchestrator,
-        codexLeaderCompactionMode: info.codexLeaderCompactionMode,
-        codexLeaderRecycleThresholdTokens: info.codexLeaderRecycleThresholdTokens,
-        codexLeaderRecycleLineage: info.codexLeaderRecycleLineage,
-      };
+      const launchInfo = buildCodexSpawnLaunchInfo(info);
       let spawnSpec: Awaited<ReturnType<typeof prepareCodexSpawn>>;
       if (info.hostId) {
         // The host prepares the launch with its own Codex binary, home and configuration.
@@ -1301,12 +1297,7 @@ export class CliLauncher {
       reasoningSummary = spawnSpec.reasoningSummary;
       instructionContext = spawnSpec.instructionContext;
       userDeveloperInstructions = spawnSpec.userDeveloperInstructions;
-      info.codexContextWindowDiagnostics = spawnSpec.contextWindowDiagnostics;
-      if (typeof spawnSpec.codexLeaderRecycleThresholdTokens === "number") {
-        info.codexLeaderRecycleThresholdTokens = spawnSpec.codexLeaderRecycleThresholdTokens;
-      } else {
-        delete info.codexLeaderRecycleThresholdTokens;
-      }
+      applyCodexSpawnMetadata(info, spawnSpec);
     } catch (err) {
       if (err instanceof MissingCodexBinaryError) {
         console.error(`[cli-launcher] ${err.message}`);

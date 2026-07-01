@@ -205,17 +205,26 @@ export function stripGlobalFlags(argv: string[]): string[] {
 
 // ─── Credential discovery ───────────────────────────────────────────────────
 
+let cachedCredentials: { sessionId: string; authToken: string } | null | undefined;
+
 /** Discover session credentials from env vars or session-auth file fallback. */
 export function getCredentials(): { sessionId: string; authToken: string } | null {
+  if (cachedCredentials !== undefined) return cachedCredentials;
+
   const sessionId = process.env.COMPANION_SESSION_ID;
   const authToken = process.env.COMPANION_AUTH_TOKEN;
-  if (sessionId && authToken) return { sessionId, authToken };
+  if (sessionId && authToken) {
+    cachedCredentials = { sessionId, authToken };
+    return cachedCredentials;
+  }
 
   // Fallback: read session-auth from workspace metadata files.
   const data = getSessionAuthFileData();
   if (data) {
-    return { sessionId: data.sessionId, authToken: data.authToken };
+    cachedCredentials = { sessionId: data.sessionId, authToken: data.authToken };
+    return cachedCredentials;
   }
+  cachedCredentials = null;
   return null;
 }
 

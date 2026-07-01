@@ -1,3 +1,28 @@
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
+
+export function getSelectedProviderEnvKeys(configToml: string): string[] {
+  const provider = readTopLevelStringSetting(configToml, "model_provider")?.trim();
+  if (!provider) return [];
+  const envKey = readStringSettingInSection(configToml, `[model_providers.${provider}]`, "env_key")?.trim();
+  return envKey ? [envKey] : [];
+}
+
+export function usesMaiLitellmProvider(configToml: string): boolean {
+  return readTopLevelStringSetting(configToml, "model_provider")?.trim().toLowerCase() === "mai-litellm";
+}
+
+export function resolveConfigPathValue(configDir: string, rawPath: string): string {
+  if (rawPath.startsWith("~/")) {
+    return join(homedir(), rawPath.slice(2));
+  }
+  return resolve(configDir, rawPath);
+}
+
+export function coercePositiveNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
 function mergeUniqueStrings(existing: string[], additions: string[]): string[] {
   const merged = [...existing];
   for (const value of additions) {
