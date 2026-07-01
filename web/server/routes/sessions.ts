@@ -76,6 +76,8 @@ import { markOrchestratorSessionWithStartupContext } from "./orchestrator-startu
 import { relaunchSessionProcess } from "./session-process-relaunch.js";
 import { buildSessionBackendLaunchSettings } from "./session-create-launch-settings.js";
 import { buildBrowserSessionDetail } from "./session-detail-response.js";
+import { registerWorkspaceTokenUsageRoute } from "./workspace-token-usage-route.js";
+import { createSessionProjectMetaBackfill } from "./session-project-meta.js";
 
 export function createSessionsRoutes(ctx: RouteContext) {
   const api = new Hono();
@@ -807,6 +809,7 @@ export function createSessionsRoutes(ctx: RouteContext) {
       memorySessionSpaceSlug,
       isOrchestrator,
       ...codexRoleLaunchSettings,
+      skipSessionAuthFile: !isOrchestrator && body.createdBy !== undefined && !worktreeInfo,
     };
 
     return {
@@ -1164,29 +1167,14 @@ export function createSessionsRoutes(ctx: RouteContext) {
   const buildEnrichedSessions = (filterFn?: (s: ReturnType<CliLauncher["listSessions"]>[number]) => boolean) =>
     buildEnrichedSessionsSnapshot(sessionSnapshotDeps, filterFn);
 
-  const backfillSessionProjectMeta = async (
-    info: { cwd: string; repoRoot?: string },
-    bridgeSession?: { state?: { repo_root?: string; cwd?: string } } | null,
-  ): Promise<void> => {
-    if ((!info.cwd || !info.cwd.trim()) && bridgeSession?.state?.cwd) {
-      info.cwd = bridgeSession.state.cwd;
-    }
-    if (info.repoRoot && info.repoRoot.trim()) return;
-    const fromBridge = bridgeSession?.state?.repo_root?.trim();
-    if (fromBridge) {
-      info.repoRoot = fromBridge;
-      return;
-    }
-    if (!info.cwd || !info.cwd.trim()) return;
-    const inferred = await gitUtils.getRepoInfoAsync(info.cwd);
-    if (inferred?.repoRoot) info.repoRoot = inferred.repoRoot;
-  };
+  const backfillSessionProjectMeta = createSessionProjectMetaBackfill(gitUtils.getRepoInfoAsync);
   api.get("/sessions", async (c) => {
     const includeArchived = parseIncludeArchived(c.req.query("includeArchived"));
     const enriched = await buildEnrichedSessions(includeArchived ? undefined : (session) => !session.archived);
     return c.json(enriched);
   });
   registerArchivedSessionPageRoute(api, sessionSnapshotDeps);
+  registerWorkspaceTokenUsageRoute(api, { launcher, wsBridge });
   registerSessionSearchRoute(api, { launcher, wsBridge, authenticateCompanionCallerOptional });
   registerGlobalStarredMessageSearchRoute(api, { launcher, wsBridge });
   registerGlobalRecentAsksRoute(api, { launcher, wsBridge });

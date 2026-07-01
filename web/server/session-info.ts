@@ -50,6 +50,10 @@ export interface SdkSessionInfo extends SyncedProjectionRestEnvelopeFields {
   codexLeaderRecycleLineage?: CodexLeaderRecycleLineage;
   /** Resolved Codex leader recycle threshold derived at launch from source model effective context. */
   codexLeaderRecycleThresholdTokens?: number;
+  /** Model id used when deriving the Codex leader recycle threshold. */
+  codexLeaderRecycleThresholdModel?: string;
+  /** Source effective context used to derive the Codex leader recycle threshold. */
+  codexLeaderSourceEffectiveContextWindowTokens?: number;
   /** Pending Codex leader recycle awaiting a fresh replacement thread and recovery prompt. */
   codexLeaderRecyclePending?: {
     eventIndex: number;

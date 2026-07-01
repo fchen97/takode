@@ -89,6 +89,8 @@ export interface LaunchOptions {
   envSlug?: string;
   /** Env keys removed after env profile resolution and before fresh session identity injection. */
   blockedEnvKeys?: string[];
+  /** Skip writing the cwd-scoped CLI fallback auth file for sessions that should not become the local default caller. */
+  skipSessionAuthFile?: boolean;
   /** Side Chat id for hidden thread sessions; persisted under the legacy slackThreadId field. */
   sideChatId?: string;
   /** Backward-compatible alias for sideChatId. */

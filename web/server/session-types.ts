@@ -63,6 +63,7 @@ import type {
   SessionContextLengthSnapshot,
   SessionLifecycleEvent,
 } from "./codex-context-types.js";
+import type { SessionTokenUsageSample } from "./workspace-token-usage-types.js";
 export type {
   CodexAutoPauseRecoveryLink,
   CodexAutoPauseRecoveryOutcome,
@@ -116,6 +117,7 @@ export type {
   SessionContextLengthSnapshot,
   SessionLifecycleEvent,
 } from "./codex-context-types.js";
+export type { SessionTokenUsageSample } from "./workspace-token-usage-types.js";
 
 // Types for the WebSocket bridge between Claude Code CLI and the browser
 
@@ -1696,27 +1698,7 @@ export interface PermissionRequest {
   slackThreadId?: string;
 }
 
-// ─── Session Creation Progress (SSE streaming) ──────────────────────────────
-
-export type CreationStepId =
-  | "resolving_env"
-  | "fetching_git"
-  | "checkout_branch"
-  | "pulling_git"
-  | "creating_worktree"
-  | "pulling_image"
-  | "building_image"
-  | "creating_container"
-  | "copying_workspace"
-  | "running_init_script"
-  | "launching_cli";
-
-export interface CreationProgressEvent {
-  step: CreationStepId;
-  label: string;
-  status: "in_progress" | "done" | "error";
-  detail?: string;
-}
+export type { CreationProgressEvent, CreationStepId } from "./session-creation-types.js";
 
 // ─── Takode Orchestration Events ─────────────────────────────────────────────
 

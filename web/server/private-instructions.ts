@@ -45,6 +45,14 @@ export async function loadPrivateDefaultInstructions(
   return formatPrivateDefaultInstructions(docs);
 }
 
+export async function composePrivateDefaultInstructions(extraInstructions?: string): Promise<string | undefined> {
+  const privateDefaultInstructions = await loadPrivateDefaultInstructions();
+  const combined = [privateDefaultInstructions, extraInstructions]
+    .filter((value): value is string => Boolean(value))
+    .join("\n\n");
+  return combined || undefined;
+}
+
 function resolveConfigPath(privateDocsDir: string, configPath?: string): string {
   if (!configPath) return join(privateDocsDir, DEFAULT_CONFIG_FILENAME);
   return isAbsolute(configPath) ? configPath : resolve(privateDocsDir, configPath);
