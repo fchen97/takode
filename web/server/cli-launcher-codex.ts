@@ -145,6 +145,8 @@ interface CodexLaunchInfo {
       };
     }>;
   };
+  codexLeaderRecycleThresholdModel?: string;
+  codexLeaderSourceEffectiveContextWindowTokens?: number;
 }
 
 interface CodexLaunchOptions {
@@ -186,6 +188,8 @@ export interface CodexSpawnSpec {
   reasoningSummary?: CodexReasoningSummaryLaunchMode;
   codexLeaderRecycleThresholdTokens?: number;
   contextWindowDiagnostics: CodexContextWindowDiagnostics;
+  codexLeaderRecycleThresholdModel?: string;
+  codexLeaderSourceEffectiveContextWindowTokens?: number;
 }
 
 async function fileExists(path: string): Promise<boolean> {
@@ -512,18 +516,27 @@ interface CodexLeaderLaunchConfig extends CodexResolvedContextLaunchConfig {
   recycleThresholdTokens: number;
   sourceEffectiveContextWindowTokens?: number;
   source?: string;
+  model?: string;
 }
 
 type CodexContextLaunchConfig = CodexResolvedContextLaunchConfig;
 
 interface CodexLeaderRecycleThresholdForConfig extends CodexLeaderRecycleThresholdResolution {
   source?: string;
+  model?: string;
+}
+
+interface TrustedCodexLeaderRecycleResolution {
+  recycleThresholdTokens: number;
+  model?: string;
+  sourceEffectiveContextWindowTokens?: number;
 }
 
 async function resolveCodexLeaderRecycleThresholdForConfig(
   codexHome: string,
   configToml: string,
   modelId: string | undefined,
+  trustedPreviousResolution?: TrustedCodexLeaderRecycleResolution,
 ): Promise<CodexLeaderRecycleThresholdForConfig> {
   const modelSlug = modelId || readTopLevelStringSetting(configToml, "model");
   const configuredRawContextWindow = readTopLevelNumberSetting(configToml, "model_context_window");
@@ -533,11 +546,35 @@ async function resolveCodexLeaderRecycleThresholdForConfig(
     : undefined;
   const existingCatalogIsTakodeLeaderGenerated =
     !!existingCatalogPath && basename(existingCatalogPath) === takodeLeaderModelCatalogFilename;
+  const trustedPreviousThreshold = coercePositiveNumber(trustedPreviousResolution?.recycleThresholdTokens);
+  const trustedPreviousEffectiveContext = coercePositiveNumber(
+    trustedPreviousResolution?.sourceEffectiveContextWindowTokens,
+  );
+  const trustedPreviousMatchesModel =
+    !!trustedPreviousThreshold &&
+    !!trustedPreviousResolution &&
+    (!modelSlug || !trustedPreviousResolution.model || trustedPreviousResolution.model === modelSlug);
+  const trustedPreviousFallback = trustedPreviousMatchesModel
+    ? ({
+        recycleThresholdTokens: Math.floor(trustedPreviousThreshold),
+        ...(trustedPreviousEffectiveContext
+          ? { sourceEffectiveContextWindowTokens: Math.floor(trustedPreviousEffectiveContext) }
+          : {}),
+        usedFallback: false,
+        source: "previous-launch",
+        ...(trustedPreviousResolution.model
+          ? { model: trustedPreviousResolution.model }
+          : modelSlug
+            ? { model: modelSlug }
+            : {}),
+      } satisfies CodexLeaderRecycleThresholdForConfig)
+    : undefined;
   if (!modelSlug) {
     const configuredEffectiveContextWindow =
       configuredRawContextWindow && !existingCatalogIsTakodeLeaderGenerated
         ? Math.floor((configuredRawContextWindow * CODEX_DEFAULT_EFFECTIVE_CONTEXT_WINDOW_PERCENT) / 100)
         : undefined;
+    if (!configuredEffectiveContextWindow && trustedPreviousFallback) return trustedPreviousFallback;
     return {
       ...resolveCodexLeaderRecycleThresholdFromEffectiveContext(configuredEffectiveContextWindow),
       source: configuredEffectiveContextWindow ? "config" : "fallback",
@@ -557,6 +594,7 @@ async function resolveCodexLeaderRecycleThresholdForConfig(
       return {
         ...resolveCodexLeaderRecycleThresholdFromEffectiveContext(effectiveContextWindow),
         source: sourceCatalogPath,
+        model: modelSlug,
       };
     }
   }
@@ -565,9 +603,11 @@ async function resolveCodexLeaderRecycleThresholdForConfig(
     configuredRawContextWindow && !existingCatalogIsTakodeLeaderGenerated
       ? Math.floor((configuredRawContextWindow * CODEX_DEFAULT_EFFECTIVE_CONTEXT_WINDOW_PERCENT) / 100)
       : undefined;
+  if (!configuredEffectiveContextWindow && trustedPreviousFallback) return trustedPreviousFallback;
   return {
     ...resolveCodexLeaderRecycleThresholdFromEffectiveContext(configuredEffectiveContextWindow),
     source: configuredEffectiveContextWindow ? "config" : "fallback",
+    ...(configuredEffectiveContextWindow ? { model: modelSlug } : {}),
   };
 }
 
@@ -1344,6 +1384,7 @@ async function ensureCodexSessionConfig(
       args: string[];
       env: Record<string, string>;
     };
+    trustedPreviousLeaderRecycleResolution?: TrustedCodexLeaderRecycleResolution;
     timing?: CooperativeTiming;
   },
 ) {
@@ -1381,7 +1422,7 @@ async function ensureCodexSessionConfig(
   const leaderLaunch = options?.leaderLaunch ?? !options?.nonLeaderAutoCompactThresholdPercent;
   const desiredContextCapacity = coercePositiveNumber(options?.codexContextCapacityTokens);
   const existingLeaderRecycleThresholdTokens = coercePositiveNumber(options?.existingLeaderRecycleThresholdTokens);
-  const leaderRecycleThreshold =
+  const leaderRecycleThreshold: CodexLeaderRecycleThresholdForConfig | undefined =
     leaderLaunch && desiredContextCapacity
       ? leaderRecycleThresholdForUsableCapacity(desiredContextCapacity)
       : leaderLaunch && existingLeaderRecycleThresholdTokens
@@ -1389,9 +1430,25 @@ async function ensureCodexSessionConfig(
             recycleThresholdTokens: existingLeaderRecycleThresholdTokens,
             source: "existing leader recycle budget",
             usedFallback: false,
+            ...(options?.trustedPreviousLeaderRecycleResolution?.model
+              ? { model: options.trustedPreviousLeaderRecycleResolution.model }
+              : modelId
+                ? { model: modelId }
+                : {}),
+            ...(options?.trustedPreviousLeaderRecycleResolution?.sourceEffectiveContextWindowTokens
+              ? {
+                  sourceEffectiveContextWindowTokens:
+                    options.trustedPreviousLeaderRecycleResolution.sourceEffectiveContextWindowTokens,
+                }
+              : {}),
           }
         : leaderLaunch
-          ? await resolveCodexLeaderRecycleThresholdForConfig(codexHome, next, modelId)
+          ? await resolveCodexLeaderRecycleThresholdForConfig(
+              codexHome,
+              next,
+              modelId,
+              options?.trustedPreviousLeaderRecycleResolution,
+            )
           : undefined;
   const leaderRecycleThresholdTokens = leaderRecycleThreshold?.recycleThresholdTokens;
   let modelCatalogJson: string | undefined;
@@ -1420,6 +1477,7 @@ async function ensureCodexSessionConfig(
       catalogEffectiveContextWindowPercent: override.launchGuard.catalogEffectiveContextWindowPercent,
       ...(sourceEffectiveContextWindowTokens ? { sourceEffectiveContextWindowTokens } : {}),
       ...(leaderRecycleThreshold?.source ? { source: leaderRecycleThreshold.source } : {}),
+      ...(leaderRecycleThreshold?.model ? { model: leaderRecycleThreshold.model } : modelId ? { model: modelId } : {}),
       ...(modelCatalogConfigPath ? { modelCatalogConfigPath } : {}),
     };
     await options?.timing?.yieldIfDue("prepare Codex leader derived context guard");
@@ -1674,6 +1732,11 @@ export async function prepareCodexSpawn(
             codexLeaderLaunch || options.env?.TAKODE_DELEGATE_ROLE === "child",
             options.env,
           ),
+          trustedPreviousLeaderRecycleResolution: {
+            recycleThresholdTokens: info.codexLeaderRecycleThresholdTokens ?? 0,
+            model: info.codexLeaderRecycleThresholdModel ?? options.model,
+            sourceEffectiveContextWindowTokens: info.codexLeaderSourceEffectiveContextWindowTokens,
+          },
           timing,
         }),
       );
@@ -1707,6 +1770,11 @@ export async function prepareCodexSpawn(
             codexLeaderLaunch || options.env?.TAKODE_DELEGATE_ROLE === "child",
             options.env,
           ),
+          trustedPreviousLeaderRecycleResolution: {
+            recycleThresholdTokens: info.codexLeaderRecycleThresholdTokens ?? 0,
+            model: info.codexLeaderRecycleThresholdModel ?? options.model,
+            sourceEffectiveContextWindowTokens: info.codexLeaderSourceEffectiveContextWindowTokens,
+          },
           timing,
         }),
       );
@@ -1782,6 +1850,7 @@ export async function prepareCodexSpawn(
         `[cli-launcher] Codex leader launch guard for session ${sessionTag(sessionId)}: ` +
           `sourceEffectiveContext=${leaderLaunchConfig.sourceEffectiveContextWindowTokens ?? "unknown"} ` +
           `source=${leaderLaunchConfig.source ?? "unknown"} ` +
+          `model=${leaderLaunchConfig.model ?? "unknown"} ` +
           `recycleThreshold=${leaderLaunchConfig.recycleThresholdTokens} ` +
           `providerContextWindow=${leaderLaunchConfig.modelContextWindow} ` +
           `providerAutoCompactLimit=${leaderLaunchConfig.modelAutoCompactTokenLimit} ` +
@@ -1826,6 +1895,8 @@ export async function prepareCodexSpawn(
         reasoningSummary: reasoningSummaryLaunchMode,
         codexLeaderRecycleThresholdTokens: resolvedLeaderRecycleThresholdTokens,
         contextWindowDiagnostics,
+        codexLeaderRecycleThresholdModel: leaderLaunchConfig?.model,
+        codexLeaderSourceEffectiveContextWindowTokens: leaderLaunchConfig?.sourceEffectiveContextWindowTokens,
       };
     }
 
@@ -1878,6 +1949,8 @@ export async function prepareCodexSpawn(
       reasoningSummary: reasoningSummaryLaunchMode,
       codexLeaderRecycleThresholdTokens: resolvedLeaderRecycleThresholdTokens,
       contextWindowDiagnostics,
+      codexLeaderRecycleThresholdModel: leaderLaunchConfig?.model,
+      codexLeaderSourceEffectiveContextWindowTokens: leaderLaunchConfig?.sourceEffectiveContextWindowTokens,
     };
   } finally {
     timing.finish({
@@ -1946,6 +2019,7 @@ export function _ensureCodexSessionConfigForTest(
       args: string[];
       env: Record<string, string>;
     };
+    trustedPreviousLeaderRecycleResolution?: TrustedCodexLeaderRecycleResolution;
     timing?: CooperativeTiming;
   },
 ) {

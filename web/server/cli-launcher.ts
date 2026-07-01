@@ -1285,6 +1285,8 @@ export class CliLauncher {
           codexLeaderCompactionMode: info.codexLeaderCompactionMode,
           codexLeaderRecycleThresholdTokens: info.codexLeaderRecycleThresholdTokens,
           codexLeaderRecycleLineage: info.codexLeaderRecycleLineage,
+          codexLeaderRecycleThresholdModel: info.codexLeaderRecycleThresholdModel,
+          codexLeaderSourceEffectiveContextWindowTokens: info.codexLeaderSourceEffectiveContextWindowTokens,
         },
         codexOptions,
       );
@@ -1296,8 +1298,12 @@ export class CliLauncher {
       info.codexContextWindowDiagnostics = spawnSpec.contextWindowDiagnostics;
       if (typeof spawnSpec.codexLeaderRecycleThresholdTokens === "number") {
         info.codexLeaderRecycleThresholdTokens = spawnSpec.codexLeaderRecycleThresholdTokens;
+        info.codexLeaderRecycleThresholdModel = spawnSpec.codexLeaderRecycleThresholdModel;
+        info.codexLeaderSourceEffectiveContextWindowTokens = spawnSpec.codexLeaderSourceEffectiveContextWindowTokens;
       } else {
         delete info.codexLeaderRecycleThresholdTokens;
+        delete info.codexLeaderRecycleThresholdModel;
+        delete info.codexLeaderSourceEffectiveContextWindowTokens;
       }
     } catch (err) {
       if (err instanceof MissingCodexBinaryError) {
