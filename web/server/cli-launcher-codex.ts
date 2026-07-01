@@ -553,7 +553,8 @@ async function resolveCodexLeaderRecycleThresholdForConfig(
   const trustedPreviousMatchesModel =
     !!trustedPreviousThreshold &&
     !!trustedPreviousResolution &&
-    (!modelSlug || !trustedPreviousResolution.model || trustedPreviousResolution.model === modelSlug);
+    !!trustedPreviousResolution.model &&
+    (!modelSlug || trustedPreviousResolution.model === modelSlug);
   const trustedPreviousFallback = trustedPreviousMatchesModel
     ? ({
         recycleThresholdTokens: Math.floor(trustedPreviousThreshold),
@@ -562,11 +563,7 @@ async function resolveCodexLeaderRecycleThresholdForConfig(
           : {}),
         usedFallback: false,
         source: "previous-launch",
-        ...(trustedPreviousResolution.model
-          ? { model: trustedPreviousResolution.model }
-          : modelSlug
-            ? { model: modelSlug }
-            : {}),
+        model: trustedPreviousResolution.model,
       } satisfies CodexLeaderRecycleThresholdForConfig)
     : undefined;
   if (!modelSlug) {
@@ -1734,7 +1731,7 @@ export async function prepareCodexSpawn(
           ),
           trustedPreviousLeaderRecycleResolution: {
             recycleThresholdTokens: info.codexLeaderRecycleThresholdTokens ?? 0,
-            model: info.codexLeaderRecycleThresholdModel ?? options.model,
+            model: info.codexLeaderRecycleThresholdModel,
             sourceEffectiveContextWindowTokens: info.codexLeaderSourceEffectiveContextWindowTokens,
           },
           timing,
@@ -1772,7 +1769,7 @@ export async function prepareCodexSpawn(
           ),
           trustedPreviousLeaderRecycleResolution: {
             recycleThresholdTokens: info.codexLeaderRecycleThresholdTokens ?? 0,
-            model: info.codexLeaderRecycleThresholdModel ?? options.model,
+            model: info.codexLeaderRecycleThresholdModel,
             sourceEffectiveContextWindowTokens: info.codexLeaderSourceEffectiveContextWindowTokens,
           },
           timing,

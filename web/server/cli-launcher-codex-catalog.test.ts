@@ -669,6 +669,54 @@ describe("Codex session catalog hardening", () => {
     });
   });
 
+  it("does not reuse migrated threshold metadata when the prior model is unknown", async () => {
+    const codexHome = await makeCodexHome();
+    const configPath = join(codexHome, "config.toml");
+    const catalogPath = join(codexHome, "takode-leader-model-catalog.json");
+    const model = "takode-test-migrated-model";
+    await writeFile(
+      configPath,
+      [`model = "${model}"`, `model_catalog_json = ${JSON.stringify(catalogPath)}`, ""].join("\n"),
+      "utf-8",
+    );
+    await writeFile(
+      catalogPath,
+      JSON.stringify({
+        models: [
+          {
+            slug: model,
+            context_window: 4_727_223,
+            max_context_window: 4_727_223,
+            effective_context_window_percent: 95,
+            auto_compact_token_limit: 4_254_500,
+          },
+        ],
+      }),
+      "utf-8",
+    );
+    await writeFile(join(codexHome, "models_cache.json"), JSON.stringify({ models: [] }), "utf-8");
+
+    const relaunch = await _ensureCodexSessionConfigForTest(codexHome, [], {
+      model,
+      trustedPreviousLeaderRecycleResolution: {
+        recycleThresholdTokens: 850_900,
+        sourceEffectiveContextWindowTokens: 875_900,
+      },
+    });
+
+    // Older persisted sessions can have a threshold but no model lineage. That
+    // metadata is not enough to prove the threshold belongs to the current
+    // launch model, so relaunch must keep the conservative fallback behavior.
+    expect(relaunch.leaderRecycleThresholdTokens).toBe(260_000);
+    expect(relaunch.leaderLaunchConfig).toMatchObject({
+      model,
+      source: "fallback",
+      recycleThresholdTokens: 260_000,
+      modelContextWindow: 1_444_445,
+      modelAutoCompactTokenLimit: 1_300_000,
+    });
+  });
+
   it("cleans legacy Takode non-leader catalog references without touching user context settings", async () => {
     const codexHome = await makeCodexHome();
     const configPath = join(codexHome, "config.toml");
