@@ -194,40 +194,15 @@ import * as treeGroupStore from "./tree-group-store.js";
 import { containerManager } from "./container-manager.js";
 import { DEFAULT_SESSION_DEFAULTS } from "../shared/session-defaults.js";
 import { _resetCodexModelCatalogCacheForTest, loadCodexModelCatalog } from "./codex-model-catalog.js";
+import {
+  createMockLauncher,
+  createMockRecorder,
+  createMockStore,
+  createMockTimerManager,
+  createMockTracker,
+} from "./routes.post-api-sessions-create.test-helpers.js";
 
 // ─── Mock factories ──────────────────────────────────────────────────────────
-
-function createMockLauncher() {
-  return {
-    launch: vi.fn(() => ({
-      sessionId: "session-1",
-      state: "starting",
-      cwd: "/test",
-      createdAt: Date.now(),
-    })),
-    kill: vi.fn(async () => true),
-    isAlive: vi.fn(() => true),
-    relaunch: vi.fn(async () => ({ ok: true })),
-    relaunchWithResumeAt: vi.fn(async () => ({ ok: true })),
-    listSessions: vi.fn(() => []),
-    getSession: vi.fn(),
-    setArchived: vi.fn(),
-    setWorktreeCleanupState: vi.fn(),
-    updateWorktree: vi.fn(),
-    removeSession: vi.fn(),
-    getOrchestratorGuardrails: vi.fn(() => "# Takode — Cross-Session Orchestration\n..."),
-    getPort: vi.fn(() => 3456),
-    getMemorySessionSpaceSlug: vi.fn(() => "Takode"),
-    setMemorySessionSpaceSlug: vi.fn(() => false),
-    verifySessionAuthToken: vi.fn(() => true),
-    herdSessions: vi.fn(() => ({ herded: [], notFound: [], conflicts: [], reassigned: [], leaders: [] })),
-    unherdSession: vi.fn(() => false),
-    getHerdedSessions: vi.fn(() => []),
-    // resolveSessionId: pass-through for exact UUIDs (used by resolveId helper in routes)
-    resolveSessionId: vi.fn((id: string) => id),
-    getSessionNum: vi.fn(() => undefined),
-  } as any;
-}
 
 function createMockBridge() {
   return {
@@ -433,44 +408,6 @@ function ensureBridgeSession(
   });
 }
 
-function createMockStore() {
-  return {
-    setArchived: vi.fn(async () => true),
-    flushAll: vi.fn(async () => {}),
-  } as any;
-}
-
-function createMockRecorder() {
-  return {
-    getRecordingsDir: vi.fn(() => "/tmp/companion-recordings"),
-    isGloballyEnabled: vi.fn(() => true),
-    getMaxLines: vi.fn(() => 500000),
-    isRecording: vi.fn(() => true),
-    getRecordingStatus: vi.fn(() => ({ filePath: "/tmp/companion-recordings/session-1.jsonl" })),
-    enableForSession: vi.fn(),
-    disableForSession: vi.fn(),
-    listRecordings: vi.fn(async () => []),
-  } as any;
-}
-
-function createMockTimerManager() {
-  return {
-    createTimer: vi.fn(),
-    listTimers: vi.fn(() => []),
-    cancelTimer: vi.fn(async () => true),
-    cancelAllTimers: vi.fn(async () => {}),
-  } as any;
-}
-
-function createMockTracker() {
-  return {
-    addMapping: vi.fn(),
-    getBySession: vi.fn(() => null),
-    removeBySession: vi.fn(),
-    isWorktreeInUse: vi.fn(() => false),
-  } as any;
-}
-
 // ─── Test setup ──────────────────────────────────────────────────────────────
 
 let app: Hono;
@@ -596,6 +533,49 @@ describe("POST /api/sessions/create", () => {
     expect(json).toMatchObject({ sessionId: "session-1", state: "starting", cwd: "/test" });
     expect(launcher.launch).toHaveBeenCalledWith(
       expect.objectContaining({ model: "claude-sonnet-4-5-20250929", cwd: "/test" }),
+    );
+  });
+
+  it("skips fallback auth writes for leader-created non-worktree child sessions", async () => {
+    const res = await app.request("/api/sessions/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cwd: "/test", createdBy: "leader-1", useWorktree: false }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(launcher.launch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cwd: "/test",
+        skipSessionAuthFile: true,
+      }),
+    );
+  });
+
+  it("preserves fallback auth writes for leader-created worktree child sessions", async () => {
+    vi.mocked(gitUtils.getRepoInfoAsync).mockResolvedValueOnce({
+      repoRoot: "/test",
+      currentBranch: "main",
+      defaultBranch: "main",
+    } as any);
+    vi.mocked(gitUtils.ensureWorktreeAsync).mockResolvedValueOnce({
+      worktreePath: "/test-wt-child",
+      actualBranch: "main-wt-child",
+      created: true,
+    } as any);
+
+    const res = await app.request("/api/sessions/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cwd: "/test", createdBy: "leader-1", useWorktree: true }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(launcher.launch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cwd: "/test-wt-child",
+        skipSessionAuthFile: false,
+      }),
     );
   });
 

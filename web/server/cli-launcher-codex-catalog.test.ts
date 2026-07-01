@@ -564,6 +564,159 @@ describe("Codex session catalog hardening", () => {
     expect(config).toContain("model_auto_compact_token_limit = 1300000");
   });
 
+  it("reuses trusted launch-derived threshold metadata when relaunch sees only the generated leader catalog", async () => {
+    const codexHome = await makeCodexHome();
+    const configPath = join(codexHome, "config.toml");
+    const catalogPath = join(codexHome, "takode-leader-model-catalog.json");
+    const model = "takode-test-gpt55";
+    await writeFile(configPath, `model = "${model}"\n`, "utf-8");
+    await writeFile(
+      join(codexHome, "models_cache.json"),
+      JSON.stringify({
+        models: [
+          {
+            slug: model,
+            context_window: 922_000,
+            max_context_window: 922_000,
+            effective_context_window_percent: 95,
+            auto_compact_token_limit: null,
+          },
+        ],
+      }),
+      "utf-8",
+    );
+
+    const firstLaunch = await _ensureCodexSessionConfigForTest(codexHome, [], { model });
+    expect(firstLaunch.leaderRecycleThresholdTokens).toBe(850_900);
+    expect(firstLaunch.leaderLaunchConfig).toMatchObject({
+      model,
+      sourceEffectiveContextWindowTokens: 875_900,
+      recycleThresholdTokens: 850_900,
+    });
+
+    await writeFile(join(codexHome, "models_cache.json"), JSON.stringify({ models: [] }), "utf-8");
+    const relaunch = await _ensureCodexSessionConfigForTest(codexHome, [], {
+      model,
+      trustedPreviousLeaderRecycleResolution: {
+        model,
+        recycleThresholdTokens: firstLaunch.leaderLaunchConfig!.recycleThresholdTokens,
+        sourceEffectiveContextWindowTokens: firstLaunch.leaderLaunchConfig!.sourceEffectiveContextWindowTokens,
+      },
+    });
+
+    // Regression for q-81: relaunch after Takode rewrote model_catalog_json to
+    // takode-leader-model-catalog.json must not degrade to the 260K fallback.
+    expect(relaunch.leaderLaunchConfig).toMatchObject({
+      model,
+      source: "previous-launch",
+      sourceEffectiveContextWindowTokens: 875_900,
+      recycleThresholdTokens: 850_900,
+      modelContextWindow: 4_727_223,
+      modelAutoCompactTokenLimit: 4_254_500,
+      modelCatalogConfigPath: catalogPath,
+    });
+    const config = await readFile(configPath, "utf-8");
+    expect(config).toContain("model_context_window = 4727223");
+    expect(config).toContain("model_auto_compact_token_limit = 4254500");
+    expect(config).not.toContain("model_context_window = 1444445");
+  });
+
+  it("does not reuse trusted launch-derived threshold metadata for a different model", async () => {
+    const codexHome = await makeCodexHome();
+    const configPath = join(codexHome, "config.toml");
+    const catalogPath = join(codexHome, "takode-leader-model-catalog.json");
+    const model = "takode-test-new-model";
+    await writeFile(
+      configPath,
+      [`model = "${model}"`, `model_catalog_json = ${JSON.stringify(catalogPath)}`, ""].join("\n"),
+      "utf-8",
+    );
+    await writeFile(
+      catalogPath,
+      JSON.stringify({
+        models: [
+          {
+            slug: model,
+            context_window: 4_727_223,
+            max_context_window: 4_727_223,
+            effective_context_window_percent: 95,
+            auto_compact_token_limit: 4_254_500,
+          },
+        ],
+      }),
+      "utf-8",
+    );
+    await writeFile(join(codexHome, "models_cache.json"), JSON.stringify({ models: [] }), "utf-8");
+
+    const relaunch = await _ensureCodexSessionConfigForTest(codexHome, [], {
+      model,
+      trustedPreviousLeaderRecycleResolution: {
+        model: "takode-test-old-model",
+        recycleThresholdTokens: 850_900,
+        sourceEffectiveContextWindowTokens: 875_900,
+      },
+    });
+
+    // The preserved value is trusted only for the same model; otherwise falling
+    // back is safer than assigning another model's source context.
+    expect(relaunch.leaderRecycleThresholdTokens).toBe(260_000);
+    expect(relaunch.leaderLaunchConfig).toMatchObject({
+      model,
+      source: "fallback",
+      recycleThresholdTokens: 260_000,
+      modelContextWindow: 1_444_445,
+      modelAutoCompactTokenLimit: 1_300_000,
+    });
+  });
+
+  it("does not reuse migrated threshold metadata when the prior model is unknown", async () => {
+    const codexHome = await makeCodexHome();
+    const configPath = join(codexHome, "config.toml");
+    const catalogPath = join(codexHome, "takode-leader-model-catalog.json");
+    const model = "takode-test-migrated-model";
+    await writeFile(
+      configPath,
+      [`model = "${model}"`, `model_catalog_json = ${JSON.stringify(catalogPath)}`, ""].join("\n"),
+      "utf-8",
+    );
+    await writeFile(
+      catalogPath,
+      JSON.stringify({
+        models: [
+          {
+            slug: model,
+            context_window: 4_727_223,
+            max_context_window: 4_727_223,
+            effective_context_window_percent: 95,
+            auto_compact_token_limit: 4_254_500,
+          },
+        ],
+      }),
+      "utf-8",
+    );
+    await writeFile(join(codexHome, "models_cache.json"), JSON.stringify({ models: [] }), "utf-8");
+
+    const relaunch = await _ensureCodexSessionConfigForTest(codexHome, [], {
+      model,
+      trustedPreviousLeaderRecycleResolution: {
+        recycleThresholdTokens: 850_900,
+        sourceEffectiveContextWindowTokens: 875_900,
+      },
+    });
+
+    // Older persisted sessions can have a threshold but no model lineage. That
+    // metadata is not enough to prove the threshold belongs to the current
+    // launch model, so relaunch must keep the conservative fallback behavior.
+    expect(relaunch.leaderRecycleThresholdTokens).toBe(260_000);
+    expect(relaunch.leaderLaunchConfig).toMatchObject({
+      model,
+      source: "fallback",
+      recycleThresholdTokens: 260_000,
+      modelContextWindow: 1_444_445,
+      modelAutoCompactTokenLimit: 1_300_000,
+    });
+  });
+
   it("cleans legacy Takode non-leader catalog references without touching user context settings", async () => {
     const codexHome = await makeCodexHome();
     const configPath = join(codexHome, "config.toml");
