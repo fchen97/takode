@@ -807,6 +807,7 @@ export function createSessionsRoutes(ctx: RouteContext) {
       memorySessionSpaceSlug,
       isOrchestrator,
       ...codexRoleLaunchSettings,
+      skipSessionAuthFile: !isOrchestrator && body.createdBy !== undefined && !worktreeInfo,
     };
 
     return {

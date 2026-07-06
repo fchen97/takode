@@ -677,7 +677,9 @@ export class CliLauncher {
 
     // Write session-auth file so takode/quest CLIs can authenticate when env vars are missing
     // (e.g., after CLI relaunch). Fire-and-forget — non-blocking.
-    this.writeSessionAuthFile(cwd, sessionId, sessionAuthToken, this.port).catch(() => {});
+    if (!options.skipSessionAuthFile) {
+      this.writeSessionAuthFile(cwd, sessionId, sessionAuthToken, this.port).catch(() => {});
+    }
 
     switch (backendType) {
       case "codex":

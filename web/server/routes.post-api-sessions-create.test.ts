@@ -599,6 +599,49 @@ describe("POST /api/sessions/create", () => {
     );
   });
 
+  it("skips fallback auth writes for leader-created non-worktree child sessions", async () => {
+    const res = await app.request("/api/sessions/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cwd: "/test", createdBy: "leader-1", useWorktree: false }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(launcher.launch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cwd: "/test",
+        skipSessionAuthFile: true,
+      }),
+    );
+  });
+
+  it("preserves fallback auth writes for leader-created worktree child sessions", async () => {
+    vi.mocked(gitUtils.getRepoInfoAsync).mockResolvedValueOnce({
+      repoRoot: "/test",
+      currentBranch: "main",
+      defaultBranch: "main",
+    } as any);
+    vi.mocked(gitUtils.ensureWorktreeAsync).mockResolvedValueOnce({
+      worktreePath: "/test-wt-child",
+      actualBranch: "main-wt-child",
+      created: true,
+    } as any);
+
+    const res = await app.request("/api/sessions/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cwd: "/test", createdBy: "leader-1", useWorktree: true }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(launcher.launch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cwd: "/test-wt-child",
+        skipSessionAuthFile: false,
+      }),
+    );
+  });
+
   it("applies centralized Codex session defaults when create fields are omitted", async () => {
     const restoreSettings = overrideSettingsForTest({
       ...DEFAULT_SESSION_DEFAULTS,
