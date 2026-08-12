@@ -5,7 +5,6 @@ import type {
   SessionTokenUsageSample,
 } from "./session-types.js";
 
-const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_TOKEN_USAGE_SAMPLES = 1_500;
 
 export interface WorkspaceTokenUsageByModelRow {
@@ -57,6 +56,11 @@ export interface WorkspaceTokenUsageByModelSummary {
 export interface WorkspaceTokenUsageSessionSource {
   state?: Pick<SessionState, "backend_type" | "model" | "codex_token_details" | "token_usage_samples">;
   messageHistory?: BrowserIncomingMessage[];
+}
+
+export interface WorkspaceTokenUsageSession {
+  sessionId: string;
+  source?: WorkspaceTokenUsageSessionSource | null;
 }
 
 type TokenBucket = Omit<WorkspaceTokenUsageByModelRow, "model"> & { sessionIds: Set<string> };
@@ -164,6 +168,22 @@ function addUsageToBucket(
   if (options.codexModelAttributionLimited) bucket.codexModelAttributionLimited = true;
 }
 
+function buildModelRows(buckets: Map<string, TokenBucket>): WorkspaceTokenUsageByModelRow[] {
+  return [...buckets.entries()]
+    .map(([model, bucket]) => ({
+      model,
+      totalTokens: bucket.totalTokens,
+      inputTokens: bucket.inputTokens,
+      outputTokens: bucket.outputTokens,
+      cachedInputTokens: bucket.cachedInputTokens,
+      reasoningOutputTokens: bucket.reasoningOutputTokens,
+      sessionCount: bucket.sessionCount,
+      ...(bucket.codexModelAttributionLimited ? { codexModelAttributionLimited: true } : {}),
+    }))
+    .filter((row) => row.totalTokens > 0)
+    .sort((a, b) => b.totalTokens - a.totalTokens || a.model.localeCompare(b.model));
+}
+
 function isResultMessage(
   message: BrowserIncomingMessage,
 ): message is Extract<BrowserIncomingMessage, { type: "result" }> {
@@ -188,8 +208,13 @@ function startOfLocalDay(timestamp: number): number {
 }
 
 function buildDayKeys(days: number, now: number): string[] {
-  const todayStart = startOfLocalDay(now);
-  return Array.from({ length: days }, (_, index) => formatLocalDay(todayStart - (days - index - 1) * DAY_MS));
+  const cursor = new Date(startOfLocalDay(now));
+  cursor.setDate(cursor.getDate() - (days - 1));
+  return Array.from({ length: days }, () => {
+    const day = formatLocalDay(cursor.getTime());
+    cursor.setDate(cursor.getDate() + 1);
+    return day;
+  });
 }
 
 function toCumulativeSample(sessionId: string, sample: SessionTokenUsageSample): CumulativeSample | null {
@@ -201,66 +226,61 @@ function toCumulativeSample(sessionId: string, sample: SessionTokenUsageSample):
   return { ...sample, sessionId, timestamp, model, observedTotalTokens };
 }
 
-function buildClaudeSamplesFromHistory(
+interface CollectedClaudeUsage {
+  usageByModel: Map<string, { inputTokens: number; outputTokens: number; cachedInputTokens: number }>;
+  samples: CumulativeSample[];
+}
+
+function collectClaudeUsageFromHistory(
   sessionId: string,
   messageHistory: BrowserIncomingMessage[] | undefined,
   limitedReasons: Set<string>,
-): CumulativeSample[] {
+): CollectedClaudeUsage {
+  const usageByModel = new Map<string, { inputTokens: number; outputTokens: number; cachedInputTokens: number }>();
   const samples: CumulativeSample[] = [];
-  if (!messageHistory) return samples;
+  if (!messageHistory) return { usageByModel, samples };
 
   for (const message of messageHistory) {
     if (!isResultMessage(message)) continue;
     const modelUsage = (message.data as CLIResultMessage | undefined)?.modelUsage;
     if (!modelUsage) continue;
     const timestamp = validTimestamp(message.timestamp);
-    if (!timestamp) {
-      limitedReasons.add("Some cumulative result totals have no timestamp, so they are excluded from daily buckets.");
-      continue;
-    }
 
     for (const [rawModel, usage] of Object.entries(modelUsage)) {
       const model = normalizeModelLabel(rawModel);
       if (!model || !usage) continue;
+      const nextUsage = {
+        inputTokens: positiveNumber(usage.inputTokens),
+        outputTokens: positiveNumber(usage.outputTokens),
+        cachedInputTokens: positiveNumber(usage.cacheReadInputTokens) + positiveNumber(usage.cacheCreationInputTokens),
+      };
+      if (totalFromParts(nextUsage) <= 0) continue;
+      usageByModel.set(model, nextUsage);
+
+      if (!timestamp) {
+        limitedReasons.add("Some cumulative result totals have no timestamp, so they are excluded from daily buckets.");
+        continue;
+      }
       const sample = toCumulativeSample(sessionId, {
         timestamp,
         backend: "claude",
         model,
-        inputTokens: positiveNumber(usage.inputTokens),
-        outputTokens: positiveNumber(usage.outputTokens),
-        cachedInputTokens: positiveNumber(usage.cacheReadInputTokens) + positiveNumber(usage.cacheCreationInputTokens),
+        ...nextUsage,
       });
       if (sample) samples.push(sample);
     }
   }
 
-  return samples;
+  return { usageByModel, samples };
 }
 
-function buildHistorySamples(
-  sessions: Array<{ sessionId: string; source?: WorkspaceTokenUsageSessionSource | null }>,
-  limitedReasons: Set<string>,
-): CumulativeSample[] {
-  const samples: CumulativeSample[] = [];
-
-  for (const session of sessions) {
-    samples.push(...buildClaudeSamplesFromHistory(session.sessionId, session.source?.messageHistory, limitedReasons));
-    for (const sample of session.source?.state?.token_usage_samples ?? []) {
-      const normalized = toCumulativeSample(session.sessionId, sample);
-      if (normalized) samples.push(normalized);
-    }
-  }
-
-  return samples;
-}
-
-function buildHistogramRange(
-  range: { id: WorkspaceTokenUsageRangeId; label: string; days: number },
+function buildHistogramRanges(
   samples: CumulativeSample[],
   now: number,
   limitedReasons: Set<string>,
-): WorkspaceTokenUsageHistogramRange {
-  const dayKeys = buildDayKeys(range.days, now);
+): WorkspaceTokenUsageHistogramRange[] {
+  const maxDays = Math.max(...HISTOGRAM_RANGES.map((range) => range.days));
+  const dayKeys = buildDayKeys(maxDays, now);
   const daySet = new Set(dayKeys);
   const dayModelTotals = new Map<string, Map<string, number>>();
   for (const day of dayKeys) dayModelTotals.set(day, new Map());
@@ -293,42 +313,42 @@ function buildHistogramRange(
     }
   }
 
-  const buckets = dayKeys.map((date) => {
-    const modelTotals = dayModelTotals.get(date) ?? new Map<string, number>();
-    const models = [...modelTotals.entries()]
-      .map(([model, totalTokens]) => ({ model, totalTokens }))
-      .filter((entry) => entry.totalTokens > 0)
-      .sort((a, b) => b.totalTokens - a.totalTokens || a.model.localeCompare(b.model));
+  return HISTOGRAM_RANGES.map((range) => {
+    const rangeDayKeys = dayKeys.slice(-range.days);
+    const buckets = rangeDayKeys.map((date) => {
+      const modelTotals = dayModelTotals.get(date) ?? new Map<string, number>();
+      const models = [...modelTotals.entries()]
+        .map(([model, totalTokens]) => ({ model, totalTokens }))
+        .filter((entry) => entry.totalTokens > 0)
+        .sort((a, b) => b.totalTokens - a.totalTokens || a.model.localeCompare(b.model));
+      return {
+        date,
+        totalTokens: models.reduce((total, entry) => total + entry.totalTokens, 0),
+        models,
+      };
+    });
     return {
-      date,
-      totalTokens: models.reduce((total, entry) => total + entry.totalTokens, 0),
-      models,
+      id: range.id,
+      label: range.label,
+      days: range.days,
+      granularity: "day" as const,
+      totalTokens: buckets.reduce((total, bucket) => total + bucket.totalTokens, 0),
+      buckets,
     };
   });
-
-  return {
-    id: range.id,
-    label: range.label,
-    days: range.days,
-    granularity: "day",
-    totalTokens: buckets.reduce((total, bucket) => total + bucket.totalTokens, 0),
-    buckets,
-  };
 }
 
 function buildHistorySummary(
-  sessions: Array<{ sessionId: string; source?: WorkspaceTokenUsageSessionSource | null }>,
+  samples: CumulativeSample[],
   now: number,
   allTimeTotalTokens: number,
+  limitedReasons: Set<string>,
 ): WorkspaceTokenUsageHistorySummary {
-  const limitedReasons = new Set<string>();
-  const samples = buildHistorySamples(sessions, limitedReasons);
   if (allTimeTotalTokens > 0 && samples.length === 0) {
     limitedReasons.add("No timestamped token usage samples are available yet for daily buckets.");
   }
-  const ranges = HISTOGRAM_RANGES.map((range) => buildHistogramRange(range, samples, now, limitedReasons));
   return {
-    ranges,
+    ranges: buildHistogramRanges(samples, now, limitedReasons),
     limited: limitedReasons.size > 0,
     limitedReasons: [...limitedReasons],
   };
@@ -370,52 +390,31 @@ export function appendTokenUsageSample(
   state.token_usage_samples = [...existing, nextSample].slice(-maxSamples);
 }
 
-function buildClaudeUsageFromHistory(messageHistory: BrowserIncomingMessage[] | undefined): Map<
-  string,
-  {
-    inputTokens: number;
-    outputTokens: number;
-    cachedInputTokens: number;
-  }
-> {
-  const usageByModel = new Map<string, { inputTokens: number; outputTokens: number; cachedInputTokens: number }>();
-  if (!messageHistory) return usageByModel;
-
-  for (const message of messageHistory) {
-    if (!isResultMessage(message)) continue;
-    const modelUsage = (message.data as CLIResultMessage | undefined)?.modelUsage;
-    if (!modelUsage) continue;
-
-    for (const [rawModel, usage] of Object.entries(modelUsage)) {
-      const model = normalizeModelLabel(rawModel);
-      if (!model || !usage) continue;
-      const nextUsage = {
-        inputTokens: positiveNumber(usage.inputTokens),
-        outputTokens: positiveNumber(usage.outputTokens),
-        cachedInputTokens: positiveNumber(usage.cacheReadInputTokens) + positiveNumber(usage.cacheCreationInputTokens),
-      };
-      if (totalFromParts(nextUsage) <= 0) continue;
-      usageByModel.set(model, nextUsage);
-    }
-  }
-
-  return usageByModel;
-}
-
 export function buildWorkspaceTokenUsageByModel(
-  sessions: Array<{ sessionId: string; source?: WorkspaceTokenUsageSessionSource | null }>,
+  sessions: WorkspaceTokenUsageSession[],
   now = Date.now(),
 ): WorkspaceTokenUsageByModelSummary {
   const buckets = new Map<string, TokenBucket>();
+  const historySamples: CumulativeSample[] = [];
+  const limitedReasons = new Set<string>();
 
   for (const session of sessions) {
     const state = session.source?.state;
-    const claudeUsageByModel = buildClaudeUsageFromHistory(session.source?.messageHistory);
-    for (const [model, usage] of claudeUsageByModel) {
+    const claudeUsage = collectClaudeUsageFromHistory(
+      session.sessionId,
+      session.source?.messageHistory,
+      limitedReasons,
+    );
+    historySamples.push(...claudeUsage.samples);
+    for (const sample of state?.token_usage_samples ?? []) {
+      const normalized = toCumulativeSample(session.sessionId, sample);
+      if (normalized) historySamples.push(normalized);
+    }
+    for (const [model, usage] of claudeUsage.usageByModel) {
       addUsageToBucket(buckets, session.sessionId, model, usage);
     }
 
-    if (state?.backend_type !== "codex" || claudeUsageByModel.size > 0) continue;
+    if (state?.backend_type !== "codex" || claudeUsage.usageByModel.size > 0) continue;
     const model = normalizeModelLabel(state.model);
     const codexDetails = state.codex_token_details;
     if (!model || !codexDetails) continue;
@@ -434,26 +433,186 @@ export function buildWorkspaceTokenUsageByModel(
     );
   }
 
-  const models = [...buckets.entries()]
-    .map(([model, bucket]) => ({
-      model,
-      totalTokens: bucket.totalTokens,
-      inputTokens: bucket.inputTokens,
-      outputTokens: bucket.outputTokens,
-      cachedInputTokens: bucket.cachedInputTokens,
-      reasoningOutputTokens: bucket.reasoningOutputTokens,
-      sessionCount: bucket.sessionCount,
-      ...(bucket.codexModelAttributionLimited ? { codexModelAttributionLimited: true } : {}),
-    }))
-    .filter((row) => row.totalTokens > 0)
-    .sort((a, b) => b.totalTokens - a.totalTokens || a.model.localeCompare(b.model));
+  const models = buildModelRows(buckets);
 
   const totalTokens = models.reduce((total, row) => total + row.totalTokens, 0);
 
   return {
     models,
     totalTokens,
-    history: buildHistorySummary(sessions, now, totalTokens),
+    history: buildHistorySummary(historySamples, now, totalTokens, limitedReasons),
+    generatedAt: now,
+  };
+}
+
+interface WorkspaceTokenUsageFingerprint {
+  source: WorkspaceTokenUsageSessionSource | null | undefined;
+  state: WorkspaceTokenUsageSessionSource["state"];
+  messageHistory: BrowserIncomingMessage[] | undefined;
+  messageHistoryLength: number;
+  lastMessage: BrowserIncomingMessage | undefined;
+  tokenSamples: SessionTokenUsageSample[] | undefined;
+  tokenSamplesLength: number;
+  lastTokenSample: SessionTokenUsageSample | undefined;
+  backendType: SessionState["backend_type"] | undefined;
+  model: string | undefined;
+  codexTotalTokens: number | undefined;
+  codexInputTokens: number | undefined;
+  codexOutputTokens: number | undefined;
+  codexCachedInputTokens: number | undefined;
+  codexReasoningOutputTokens: number | undefined;
+}
+
+function buildSessionFingerprint(
+  source: WorkspaceTokenUsageSessionSource | null | undefined,
+): WorkspaceTokenUsageFingerprint {
+  const messageHistory = source?.messageHistory;
+  const tokenSamples = source?.state?.token_usage_samples;
+  const codexDetails = source?.state?.codex_token_details;
+  return {
+    source,
+    state: source?.state,
+    messageHistory,
+    messageHistoryLength: messageHistory?.length ?? 0,
+    lastMessage: messageHistory?.[messageHistory.length - 1],
+    tokenSamples,
+    tokenSamplesLength: tokenSamples?.length ?? 0,
+    lastTokenSample: tokenSamples?.[tokenSamples.length - 1],
+    backendType: source?.state?.backend_type,
+    model: source?.state?.model,
+    codexTotalTokens: codexDetails?.totalTokens,
+    codexInputTokens: codexDetails?.inputTokens,
+    codexOutputTokens: codexDetails?.outputTokens,
+    codexCachedInputTokens: codexDetails?.cachedInputTokens,
+    codexReasoningOutputTokens: codexDetails?.reasoningOutputTokens,
+  };
+}
+
+function fingerprintsMatch(left: WorkspaceTokenUsageFingerprint, right: WorkspaceTokenUsageFingerprint): boolean {
+  return (
+    left.source === right.source &&
+    left.state === right.state &&
+    left.messageHistory === right.messageHistory &&
+    left.messageHistoryLength === right.messageHistoryLength &&
+    left.lastMessage === right.lastMessage &&
+    left.tokenSamples === right.tokenSamples &&
+    left.tokenSamplesLength === right.tokenSamplesLength &&
+    left.lastTokenSample === right.lastTokenSample &&
+    left.backendType === right.backendType &&
+    left.model === right.model &&
+    left.codexTotalTokens === right.codexTotalTokens &&
+    left.codexInputTokens === right.codexInputTokens &&
+    left.codexOutputTokens === right.codexOutputTokens &&
+    left.codexCachedInputTokens === right.codexCachedInputTokens &&
+    left.codexReasoningOutputTokens === right.codexReasoningOutputTokens
+  );
+}
+
+export class WorkspaceTokenUsageSummaryCache {
+  private cachedDay: string | undefined;
+  private cachedSummary: WorkspaceTokenUsageByModelSummary | undefined;
+  private sessionEntries = new Map<
+    string,
+    { fingerprint: WorkspaceTokenUsageFingerprint; summary: WorkspaceTokenUsageByModelSummary }
+  >();
+
+  getSummary(sessions: WorkspaceTokenUsageSession[], now = Date.now()): WorkspaceTokenUsageByModelSummary {
+    const currentDay = formatLocalDay(now);
+    const dayChanged = this.cachedDay !== currentDay;
+    const nextEntries = new Map<
+      string,
+      { fingerprint: WorkspaceTokenUsageFingerprint; summary: WorkspaceTokenUsageByModelSummary }
+    >();
+    let changed = !this.cachedSummary || dayChanged || this.sessionEntries.size !== sessions.length;
+
+    for (const session of sessions) {
+      const fingerprint = buildSessionFingerprint(session.source);
+      const previous = this.sessionEntries.get(session.sessionId);
+      if (!dayChanged && previous && fingerprintsMatch(previous.fingerprint, fingerprint)) {
+        nextEntries.set(session.sessionId, previous);
+        continue;
+      }
+      changed = true;
+      nextEntries.set(session.sessionId, {
+        fingerprint,
+        summary: buildWorkspaceTokenUsageByModel([session], now),
+      });
+    }
+
+    this.sessionEntries = nextEntries;
+    this.cachedDay = currentDay;
+    if (!changed && this.cachedSummary) {
+      return { ...this.cachedSummary, generatedAt: now };
+    }
+
+    this.cachedSummary = mergeSessionSummaries(this.sessionEntries, now);
+    return this.cachedSummary;
+  }
+}
+
+function mergeSessionSummaries(
+  entries: Map<string, { summary: WorkspaceTokenUsageByModelSummary }>,
+  now: number,
+): WorkspaceTokenUsageByModelSummary {
+  const modelBuckets = new Map<string, TokenBucket>();
+  const limitedReasons = new Set<string>();
+  const historyByRange = new Map<WorkspaceTokenUsageRangeId, Map<string, Map<string, number>>>();
+  for (const range of HISTOGRAM_RANGES) {
+    historyByRange.set(range.id, new Map(buildDayKeys(range.days, now).map((day) => [day, new Map()])));
+  }
+
+  for (const [sessionId, { summary }] of entries) {
+    for (const row of summary.models) {
+      addUsageToBucket(modelBuckets, sessionId, row.model, row, {
+        codexModelAttributionLimited: row.codexModelAttributionLimited,
+      });
+    }
+    for (const reason of summary.history.limitedReasons) limitedReasons.add(reason);
+    for (const range of summary.history.ranges) {
+      const dayTotals = historyByRange.get(range.id);
+      if (!dayTotals) continue;
+      for (const bucket of range.buckets) {
+        const modelTotals = dayTotals.get(bucket.date);
+        if (!modelTotals) continue;
+        for (const model of bucket.models) {
+          modelTotals.set(model.model, (modelTotals.get(model.model) ?? 0) + model.totalTokens);
+        }
+      }
+    }
+  }
+
+  const models = buildModelRows(modelBuckets);
+  const ranges = HISTOGRAM_RANGES.map((range) => {
+    const dayTotals = historyByRange.get(range.id) ?? new Map();
+    const buckets = [...dayTotals.entries()].map(([date, modelTotals]) => {
+      const histogramModels = [...modelTotals.entries()]
+        .map(([model, totalTokens]) => ({ model, totalTokens }))
+        .filter((entry) => entry.totalTokens > 0)
+        .sort((a, b) => b.totalTokens - a.totalTokens || a.model.localeCompare(b.model));
+      return {
+        date,
+        totalTokens: histogramModels.reduce((total, entry) => total + entry.totalTokens, 0),
+        models: histogramModels,
+      };
+    });
+    return {
+      id: range.id,
+      label: range.label,
+      days: range.days,
+      granularity: "day" as const,
+      totalTokens: buckets.reduce((total, bucket) => total + bucket.totalTokens, 0),
+      buckets,
+    };
+  });
+
+  return {
+    models,
+    totalTokens: models.reduce((total, row) => total + row.totalTokens, 0),
+    history: {
+      ranges,
+      limited: limitedReasons.size > 0,
+      limitedReasons: [...limitedReasons],
+    },
     generatedAt: now,
   };
 }

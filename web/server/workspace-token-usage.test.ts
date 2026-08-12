@@ -1,5 +1,6 @@
+import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
-import { buildWorkspaceTokenUsageByModel } from "./workspace-token-usage.js";
+import { buildWorkspaceTokenUsageByModel, WorkspaceTokenUsageSummaryCache } from "./workspace-token-usage.js";
 import type { BrowserIncomingMessage } from "./session-types.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -281,5 +282,145 @@ describe("buildWorkspaceTokenUsageByModel", () => {
     expect(summary.history.limitedReasons).toContain(
       "Some cumulative result totals have no timestamp, so they are excluded from daily buckets.",
     );
+  });
+
+  it("enumerates local calendar days without skipping the spring DST transition", () => {
+    // Run in a dedicated non-UTC process so the regression is deterministic
+    // without changing the timezone shared by parallel Vitest files.
+    const script = `
+      import { buildWorkspaceTokenUsageByModel } from "./server/workspace-token-usage.ts";
+      const now = new Date(2026, 2, 10, 12).getTime();
+      const week = buildWorkspaceTokenUsageByModel([], now).history.ranges.find((range) => range.id === "week");
+      console.log(JSON.stringify(week?.buckets.map((bucket) => bucket.date)));
+    `;
+    const result = spawnSync(process.execPath, ["--eval", script], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      env: { ...process.env, TZ: "America/Los_Angeles" },
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout.trim())).toEqual([
+      "2026-03-04",
+      "2026-03-05",
+      "2026-03-06",
+      "2026-03-07",
+      "2026-03-08",
+      "2026-03-09",
+      "2026-03-10",
+    ]);
+  });
+
+  it("shares one bounded aggregation across repeated large-workspace polls", () => {
+    // The Task Panel polls every 30 seconds per browser. A server cache hit
+    // must inspect only per-session fingerprints, not rescan deep histories.
+    const now = new Date(2026, 0, 8, 12).getTime();
+    let historyScans = 0;
+    const trackedHistories: BrowserIncomingMessage[][] = [];
+    const sessions = Array.from({ length: 200 }, (_, sessionIndex) => {
+      const history = Array.from({ length: 32 }, (_, sampleIndex) =>
+        resultWithModelUsage(
+          {
+            "claude-sonnet": {
+              inputTokens: sampleIndex + 1,
+              outputTokens: 0,
+              cacheReadInputTokens: 0,
+              cacheCreationInputTokens: 0,
+            },
+          },
+          now - (31 - sampleIndex) * 60_000,
+        ),
+      );
+      const trackedHistory = new Proxy(history, {
+        get(target, property, receiver) {
+          if (property === Symbol.iterator) {
+            return function* iterateHistory() {
+              historyScans += 1;
+              yield* target;
+            };
+          }
+          return Reflect.get(target, property, receiver);
+        },
+      });
+      trackedHistories.push(trackedHistory);
+      return {
+        sessionId: `session-${sessionIndex}`,
+        source: {
+          state: { backend_type: "claude" as const, model: "claude-sonnet" },
+          messageHistory: trackedHistory,
+        },
+      };
+    });
+    const cache = new WorkspaceTokenUsageSummaryCache();
+
+    const first = cache.getSummary(sessions, now);
+    const second = cache.getSummary(sessions, now + 30_000);
+
+    expect(first.totalTokens).toBe(200 * 32);
+    expect(historyScans).toBe(200);
+    expect(second.totalTokens).toBe(first.totalTokens);
+    expect(second.generatedAt).toBe(now + 30_000);
+    expect(historyScans).toBe(200);
+
+    trackedHistories[0].push(
+      resultWithModelUsage(
+        {
+          "claude-sonnet": {
+            inputTokens: 64,
+            outputTokens: 0,
+            cacheReadInputTokens: 0,
+            cacheCreationInputTokens: 0,
+          },
+        },
+        now + 60_000,
+      ),
+    );
+    const afterOneSessionChanges = cache.getSummary(sessions, now + 60_000);
+    expect(afterOneSessionChanges.totalTokens).toBe(first.totalTokens + 32);
+    expect(historyScans).toBe(201);
+  });
+
+  it("invalidates the shared summary when a session history grows", () => {
+    const now = new Date(2026, 0, 8, 12).getTime();
+    const history = [
+      resultWithModelUsage(
+        {
+          "claude-sonnet": {
+            inputTokens: 10,
+            outputTokens: 0,
+            cacheReadInputTokens: 0,
+            cacheCreationInputTokens: 0,
+          },
+        },
+        now - 1_000,
+      ),
+    ];
+    const sessions = [
+      {
+        sessionId: "session-1",
+        source: {
+          state: { backend_type: "claude" as const, model: "claude-sonnet" },
+          messageHistory: history,
+        },
+      },
+    ];
+    const cache = new WorkspaceTokenUsageSummaryCache();
+    expect(cache.getSummary(sessions, now).totalTokens).toBe(10);
+
+    history.push(
+      resultWithModelUsage(
+        {
+          "claude-sonnet": {
+            inputTokens: 25,
+            outputTokens: 0,
+            cacheReadInputTokens: 0,
+            cacheCreationInputTokens: 0,
+          },
+        },
+        now,
+      ),
+    );
+
+    expect(cache.getSummary(sessions, now + 30_000).totalTokens).toBe(25);
   });
 });
