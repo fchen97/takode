@@ -35,6 +35,7 @@ import type { VoiceTranscriptionFrontendTimingReport, VoiceTranscriptionTiming }
 import type { ShortcutSettings } from "./shortcuts.js";
 import type { SessionDefaultsSettings } from "../shared/session-defaults.js";
 import type { CodexLeaderCompactionMode } from "../shared/codex-leader-compaction-mode.js";
+import type { WorkspaceTokenUsageByModelSummary } from "./api/workspace-token-usage-types.js";
 
 export { checkHealth, checkHealthStatus, checkReadiness, checkReadinessStatus } from "./api/server-status.js";
 export type { ServerStatusProbe } from "./api/server-status.js";
@@ -107,51 +108,15 @@ export type {
   VoiceTranscriptionTiming,
 } from "./transcription-progress.js";
 
-export interface WorkspaceTokenUsageByModelRow {
-  model: string;
-  totalTokens: number;
-  inputTokens: number;
-  outputTokens: number;
-  cachedInputTokens: number;
-  reasoningOutputTokens: number;
-  sessionCount: number;
-  codexModelAttributionLimited?: boolean;
-}
-
-export type WorkspaceTokenUsageRangeId = "week" | "month";
-
-export interface WorkspaceTokenUsageHistogramModel {
-  model: string;
-  totalTokens: number;
-}
-
-export interface WorkspaceTokenUsageHistogramBucket {
-  date: string;
-  totalTokens: number;
-  models: WorkspaceTokenUsageHistogramModel[];
-}
-
-export interface WorkspaceTokenUsageHistogramRange {
-  id: WorkspaceTokenUsageRangeId;
-  label: string;
-  days: number;
-  granularity: "day";
-  totalTokens: number;
-  buckets: WorkspaceTokenUsageHistogramBucket[];
-}
-
-export interface WorkspaceTokenUsageHistorySummary {
-  ranges: WorkspaceTokenUsageHistogramRange[];
-  limited: boolean;
-  limitedReasons: string[];
-}
-
-export interface WorkspaceTokenUsageByModelSummary {
-  models: WorkspaceTokenUsageByModelRow[];
-  totalTokens: number;
-  history: WorkspaceTokenUsageHistorySummary;
-  generatedAt: number;
-}
+export type {
+  WorkspaceTokenUsageByModelRow,
+  WorkspaceTokenUsageByModelSummary,
+  WorkspaceTokenUsageHistogramBucket,
+  WorkspaceTokenUsageHistogramModel,
+  WorkspaceTokenUsageHistogramRange,
+  WorkspaceTokenUsageHistorySummary,
+  WorkspaceTokenUsageRangeId,
+} from "./api/workspace-token-usage-types.js";
 
 export {
   getTranscriptionRequestTimeoutMs,

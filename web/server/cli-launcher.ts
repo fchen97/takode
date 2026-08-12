@@ -41,7 +41,8 @@ import { normalizeCodexLeaderCompactionMode } from "../shared/codex-leader-compa
 import { normalizeCodexMultiAgentVersion } from "../shared/codex-multi-agent-version.js";
 import { applySessionLaunchConfigPatch, type SessionLaunchConfigPatch } from "./session-launch-config.js";
 import { isActivePublicOrchestratorCreator } from "./codex-worker-create-role.js";
-import { loadPrivateDefaultInstructions } from "./private-instructions.js";
+import { composePrivateDefaultInstructions } from "./private-instructions.js";
+import { applyCodexSpawnMetadata, buildCodexSpawnLaunchInfo } from "./cli-launcher-codex-metadata.js";
 
 export { stripInternalLauncherSessionState, type SdkSessionInfo } from "./session-info.js";
 export type { LaunchOptions } from "./cli-launcher-options.js";
@@ -672,7 +673,7 @@ export class CliLauncher {
       modelAuthority: info.modelAuthority,
       codexMultiAgentVersion: info.codexMultiAgentVersion,
       env: envWithSessionId,
-      extraInstructions: await this.composeExtraInstructions(options.extraInstructions),
+      extraInstructions: await composePrivateDefaultInstructions(options.extraInstructions),
     };
 
     // Write session-auth file so takode/quest CLIs can authenticate when env vars are missing
@@ -862,7 +863,7 @@ export class CliLauncher {
       const relaunchExtraInstructions = info.isOrchestrator
         ? this.getOrchestratorGuardrails(bt)
         : (info.codexWorkerV2Cutover?.oneShotExtraInstructions ?? undefined);
-      const extraInstructions = await this.composeExtraInstructions(relaunchExtraInstructions);
+      const extraInstructions = await composePrivateDefaultInstructions(relaunchExtraInstructions);
 
       switch (bt) {
         case "codex":
@@ -960,14 +961,6 @@ export class CliLauncher {
    */
   getStartingSessions(): SdkSessionInfo[] {
     return Array.from(this.sessions.values()).filter((s) => s.state === "starting");
-  }
-
-  private async composeExtraInstructions(extraInstructions?: string): Promise<string | undefined> {
-    const privateDefaultInstructions = await loadPrivateDefaultInstructions();
-    const combined = [privateDefaultInstructions, extraInstructions]
-      .filter((value): value is string => Boolean(value))
-      .join("\n\n");
-    return combined || undefined;
   }
 
   private spawnCLI(
@@ -1278,35 +1271,13 @@ export class CliLauncher {
             ...options,
           }
         : options;
-      const spawnSpec = await prepareCodexSpawn(
-        sessionId,
-        {
-          cwd: info.cwd,
-          cliSessionId: info.cliSessionId,
-          isOrchestrator: info.isOrchestrator,
-          codexLeaderCompactionMode: info.codexLeaderCompactionMode,
-          codexLeaderRecycleThresholdTokens: info.codexLeaderRecycleThresholdTokens,
-          codexLeaderRecycleLineage: info.codexLeaderRecycleLineage,
-          codexLeaderRecycleThresholdModel: info.codexLeaderRecycleThresholdModel,
-          codexLeaderSourceEffectiveContextWindowTokens: info.codexLeaderSourceEffectiveContextWindowTokens,
-        },
-        codexOptions,
-      );
+      const spawnSpec = await prepareCodexSpawn(sessionId, buildCodexSpawnLaunchInfo(info), codexOptions);
       spawnCmd = spawnSpec.spawnCmd;
       spawnEnv = spawnSpec.spawnEnv;
       spawnCwd = spawnSpec.spawnCwd;
       sandboxMode = spawnSpec.sandboxMode;
       reasoningSummary = spawnSpec.reasoningSummary;
-      info.codexContextWindowDiagnostics = spawnSpec.contextWindowDiagnostics;
-      if (typeof spawnSpec.codexLeaderRecycleThresholdTokens === "number") {
-        info.codexLeaderRecycleThresholdTokens = spawnSpec.codexLeaderRecycleThresholdTokens;
-        info.codexLeaderRecycleThresholdModel = spawnSpec.codexLeaderRecycleThresholdModel;
-        info.codexLeaderSourceEffectiveContextWindowTokens = spawnSpec.codexLeaderSourceEffectiveContextWindowTokens;
-      } else {
-        delete info.codexLeaderRecycleThresholdTokens;
-        delete info.codexLeaderRecycleThresholdModel;
-        delete info.codexLeaderSourceEffectiveContextWindowTokens;
-      }
+      applyCodexSpawnMetadata(info, spawnSpec);
     } catch (err) {
       if (err instanceof MissingCodexBinaryError) {
         console.error(`[cli-launcher] ${err.message}`);

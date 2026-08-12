@@ -26,16 +26,24 @@ import {
   withNonInteractiveGitEditorEnv,
 } from "./cli-launcher-env.js";
 import {
-  escapeRegExp,
-  readStringSettingInSection,
+  coercePositiveNumber,
+  getSelectedProviderEnvKeys,
   readTopLevelNumberSetting,
   readTopLevelStringSetting,
   removeTopLevelTomlSettings,
+  resolveConfigPathValue,
   upsertBooleanSettingInSection,
   upsertShellEnvironmentIncludeOnly,
   upsertTopLevelNumberSetting,
   upsertTopLevelStringSetting,
+  usesMaiLitellmProvider,
 } from "./cli-launcher-codex-config-utils.js";
+import {
+  mergePathStrings,
+  normalizeMaiHostname,
+  quoteShellEnvValue,
+  readShellEnvAssignment,
+} from "./cli-launcher-codex-wrapper-utils.js";
 import { CooperativeTiming } from "./cooperative-timing.js";
 import { buildTakodeDelegateMcpConfig, upsertTakodeDelegateMcpServer } from "./codex-delegate-mcp-config.js";
 import { resolveBinary, getEnrichedPath, captureUserShellEnv } from "./path-resolver.js";
@@ -293,46 +301,6 @@ function resolveCodexSandbox(permissionMode?: string, requested?: CodexSandboxMo
   }
 }
 
-function mergePathStrings(paths: Array<string | undefined>): string {
-  const seen = new Set<string>();
-  const merged: string[] = [];
-  for (const pathValue of paths) {
-    for (const entry of (pathValue || "").split(":")) {
-      if (!entry || seen.has(entry)) continue;
-      seen.add(entry);
-      merged.push(entry);
-    }
-  }
-  return merged.join(":");
-}
-
-function normalizeMaiHostname(input: string): string {
-  let normalized = input.replace(/[^A-Za-z0-9._-]/g, "-");
-  while (normalized.length > 0 && /^[._-]/.test(normalized)) normalized = normalized.slice(1);
-  while (normalized.length > 0 && /[._-]$/.test(normalized)) normalized = normalized.slice(0, -1);
-  if (normalized.length > 64) {
-    normalized = normalized.slice(0, 64);
-    while (normalized.length > 0 && /[._-]$/.test(normalized)) normalized = normalized.slice(0, -1);
-  }
-  return normalized || "host";
-}
-
-function quoteShellEnvValue(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
-}
-
-function readShellEnvAssignment(raw: string, key: string): string | undefined {
-  const match = raw.match(new RegExp(`^${escapeRegExp(key)}=(.*)$`, "m"));
-  if (!match) return undefined;
-  const value = match[1]?.trim() || "";
-  if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
-    return value.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, "\\");
-  }
-  if (value.length >= 2 && value.startsWith("'") && value.endsWith("'")) {
-    return value.slice(1, -1).replace(/'\\\\''/g, "'");
-  }
-  return value;
-}
 function isCodexLeaderLaunch(info: CodexLaunchInfo, options: CodexLaunchOptions): boolean {
   return info.isOrchestrator === true || options.env?.TAKODE_ROLE === "orchestrator";
 }
@@ -398,17 +366,6 @@ function scrubSessionScopedCodexConfig(configToml: string): string {
   return removeTopLevelTomlSettings(configToml, sessionScopedCodexConfigKeys);
 }
 
-function getSelectedProviderEnvKeys(configToml: string): string[] {
-  const provider = readTopLevelStringSetting(configToml, "model_provider")?.trim();
-  if (!provider) return [];
-  const envKey = readStringSettingInSection(configToml, `[model_providers.${provider}]`, "env_key")?.trim();
-  return envKey ? [envKey] : [];
-}
-
-function usesMaiLitellmProvider(configToml: string): boolean {
-  return readTopLevelStringSetting(configToml, "model_provider")?.trim().toLowerCase() === "mai-litellm";
-}
-
 function isTakodeNonLeaderModelCatalogConfigPath(codexHome: string, rawPath: string): boolean {
   const resolvedPath = resolveConfigPathValue(codexHome, rawPath);
   return (
@@ -443,17 +400,6 @@ async function resolveMaiWrapperSessionLaunchSpec(
   await ensureMaiWrapperHostnameShim(hostnameShimDir, overlayHostname);
   return { hostnameShimDir };
 }
-function resolveConfigPathValue(configDir: string, rawPath: string): string {
-  if (rawPath.startsWith("~/")) {
-    return join(homedir(), rawPath.slice(2));
-  }
-  return resolve(configDir, rawPath);
-}
-
-function coercePositiveNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
-}
-
 function displayNameFromModelSlug(modelSlug: string): string {
   if (/^gpt-/i.test(modelSlug)) return `GPT-${modelSlug.slice(4)}`;
   return modelSlug
