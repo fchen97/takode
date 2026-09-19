@@ -6,6 +6,8 @@ import { projectQuestDelivery } from "../shared/quest-delivery.js";
 
 vi.mock("./takode-core.js", async (original) => ({
   ...(await original<typeof import("./takode-core.js")>()),
+  // Exercise delivery dispatch without depending on the developer's session credentials.
+  getCallerSessionId: () => "delivery-test-session",
   apiPost: vi.fn(),
 }));
 
