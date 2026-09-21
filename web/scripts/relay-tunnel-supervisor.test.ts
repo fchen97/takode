@@ -1,5 +1,6 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
+import { EventEmitter } from "node:events";
 import {
   appendFile,
   chmod,
@@ -58,13 +59,79 @@ interface StatusSnapshot {
   configFingerprint: string;
 }
 
-afterEach(async () => {
-  for (const child of runningProcesses) {
+async function cleanupTestResources(): Promise<void> {
+  // A hook can outlive its deadline. Detach this test's ownership before awaiting
+  // exits so late cleanup cannot clear or remove a subsequent test's resources.
+  const children = [...runningProcesses];
+  const directories = tempDirs.splice(0);
+  runningProcesses.clear();
+  for (const child of children) {
     if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
   }
-  await Promise.all([...runningProcesses].map((child) => waitForExit(child).catch(() => undefined)));
-  runningProcesses.clear();
-  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { force: true, recursive: true })));
+  try {
+    await Promise.all(children.map((child) => waitForExit(child)));
+  } catch (cause) {
+    throw new Error(`Preserving relay test fixtures after unconfirmed child exit: ${directories.join(", ")}`, {
+      cause,
+    });
+  }
+  await Promise.all(directories.map((dir) => rm(dir, { force: true, recursive: true })));
+}
+
+afterEach(cleanupTestResources);
+
+describe("relay test resource ownership", () => {
+  it("keeps newer fixtures and process tracking intact when earlier cleanup finishes late", async () => {
+    // Reproduce overlapping hooks without waiting for a real hook deadline or
+    // starting a supervisor: the old child exit is controlled by the test.
+    const previousDirectory = await mkdtemp(join(tmpdir(), "relay-cleanup-previous-"));
+    tempDirs.push(previousDirectory);
+    const previousChild = Object.assign(new EventEmitter(), {
+      exitCode: null,
+      signalCode: null,
+      kill: vi.fn(() => true),
+    }) as unknown as ChildProcess;
+    runningProcesses.add(previousChild);
+    const pendingCleanup = cleanupTestResources();
+    try {
+      const nextDirectory = await mkdtemp(join(tmpdir(), "relay-cleanup-next-"));
+      tempDirs.push(nextDirectory);
+      const nextChild = { exitCode: 0, signalCode: null } as ChildProcess;
+      runningProcesses.add(nextChild);
+      previousChild.emit("exit", 0, null);
+      await pendingCleanup;
+
+      expect(await pathExists(previousDirectory)).toBe(false);
+      expect(await pathExists(nextDirectory)).toBe(true);
+      expect(runningProcesses.has(nextChild)).toBe(true);
+      expect(previousChild.kill).toHaveBeenCalledWith("SIGTERM");
+    } finally {
+      previousChild.emit("exit", 0, null);
+      await pendingCleanup;
+    }
+  });
+
+  it("preserves fixture evidence when a child exit cannot be confirmed", async () => {
+    // An exit-wait error must surface without deleting evidence used by a child
+    // whose termination has not been established.
+    const directory = await mkdtemp(join(tmpdir(), "relay-cleanup-unconfirmed-"));
+    tempDirs.push(directory);
+    const child = Object.assign(new EventEmitter(), {
+      exitCode: null,
+      signalCode: null,
+      kill: vi.fn(() => true),
+    }) as unknown as ChildProcess;
+    runningProcesses.add(child);
+    const pendingCleanup = cleanupTestResources();
+    child.emit("error", new Error("Synthetic exit observation failure"));
+    try {
+      await expect(pendingCleanup).rejects.toThrow("Preserving relay test fixtures after unconfirmed child exit");
+      expect(await pathExists(directory)).toBe(true);
+    } finally {
+      // No real child was spawned; this test alone owns the retained fixture.
+      tempDirs.push(directory);
+    }
+  });
 });
 
 describe("relay tunnel supervisor tracked artifacts", () => {
