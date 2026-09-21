@@ -373,14 +373,27 @@ printf '%s\\n' "$*" >> "\${TAKODE_RELAY_SUPERVISOR_TEST_STATE:?}/unified-events"
 `;
 }
 
+export async function cleanupTestResources(): Promise<void> {
+  // A hook can outlive its deadline. Detach this test's ownership before awaiting
+  // exits so late cleanup cannot clear or remove a subsequent test's resources.
+  const children = [...runningProcesses];
+  const directories = tempDirs.splice(0);
+  runningProcesses.clear();
+  for (const child of children) {
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
+  }
+  try {
+    await Promise.all(children.map((child) => waitForExit(child)));
+  } catch (cause) {
+    throw new Error(`Preserving relay test fixtures after unconfirmed child exit: ${directories.join(", ")}`, {
+      cause,
+    });
+  }
+  await Promise.all(directories.map((dir) => rm(dir, { force: true, recursive: true })));
+}
+
+
 /** Registers the per-test cleanup that stops supervisors and removes fixtures. */
 export function registerSupervisorCleanup(): void {
-  afterEach(async () => {
-    for (const child of runningProcesses) {
-      if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
-    }
-    await Promise.all([...runningProcesses].map((child) => waitForExit(child).catch(() => undefined)));
-    runningProcesses.clear();
-    await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { force: true, recursive: true })));
-  });
+  afterEach(cleanupTestResources);
 }
