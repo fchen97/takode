@@ -67,4 +67,3 @@ describe("relay test resource ownership", () => {
     }
   });
 });
-
