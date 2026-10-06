@@ -1265,32 +1265,16 @@ describe("relaunch", () => {
       return "PRIVATE_RELAUNCH_DANGEROUS_OPERATION_MARKER";
     });
 
-    let resolveFirst: (code: number) => void;
-    const firstProc = {
-      pid: 12345,
-      kill: vi.fn(() => {
-        resolveFirst(0);
-      }),
-      exited: new Promise<number>((r) => {
-        resolveFirst = r;
-      }),
-      stdout: null,
-      stderr: null,
-    };
-    mockSpawn.mockReturnValueOnce(firstProc);
-
     await launcher.launch({ cwd: "/tmp/project" });
     launcher.setCLISessionId("test-session-id", "cli-worker-id");
 
-    const secondProc = createMockProc(54321);
-    mockSpawn.mockReturnValueOnce(secondProc);
     const result = await launcher.relaunch("test-session-id");
     expect(result).toEqual({ ok: true });
 
-    const [relaunchCmd] = mockSpawn.mock.calls[1];
-    const sysPromptIdx = relaunchCmd.indexOf("--append-system-prompt");
-    expect(sysPromptIdx).toBeGreaterThan(-1);
-    const sysPrompt = relaunchCmd[sysPromptIdx + 1] as string;
+    // Observe the SDK relaunch boundary, preserving the private-default content
+    // checks while the retired WebSocket command line remains removed.
+    const sysPrompt = sdkAdapterLaunches[1]!.options.instructions as string;
+    expect(sysPrompt).toBeTruthy();
     expect(sysPrompt).toContain("## Private Default Instructions");
     expect(sysPrompt).toContain("PRIVATE_RELAUNCH_DANGEROUS_OPERATION_MARKER");
   });

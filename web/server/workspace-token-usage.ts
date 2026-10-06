@@ -263,7 +263,7 @@ function collectClaudeUsageFromHistory(
       }
       const sample = toCumulativeSample(sessionId, {
         timestamp,
-        backend: "claude",
+        backend: "claude-sdk",
         model,
         ...nextUsage,
       });

@@ -462,10 +462,10 @@ describe("session identity injection", () => {
 
     await launcher.launch({ cwd: "/tmp/project", extraInstructions: "SESSION_EXTRA_MARKER" });
 
-    const [cmdAndArgs] = mockSpawn.mock.calls[0];
-    const sysPromptIdx = cmdAndArgs.indexOf("--append-system-prompt");
-    expect(sysPromptIdx).toBeGreaterThan(-1);
-    const sysPrompt = String(cmdAndArgs[sysPromptIdx + 1] ?? "");
+    // Upstream Claude launches through the SDK; preserve the prompt-content
+    // and ordering checks at the adapter's instruction boundary.
+    const sysPrompt = String(sdkAdapterLaunches[0]!.options.instructions ?? "");
+    expect(sysPrompt).toBeTruthy();
     expect(sysPrompt).toContain("## Private Default Instructions");
     expect(sysPrompt).toContain("PRIVATE_DANGEROUS_OPERATION_MARKER");
     expect(sysPrompt.indexOf("PRIVATE_DANGEROUS_OPERATION_MARKER")).toBeLessThan(

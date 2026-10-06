@@ -392,7 +392,6 @@ export async function cleanupTestResources(): Promise<void> {
   await Promise.all(directories.map((dir) => rm(dir, { force: true, recursive: true })));
 }
 
-
 /** Registers the per-test cleanup that stops supervisors and removes fixtures. */
 export function registerSupervisorCleanup(): void {
   afterEach(cleanupTestResources);
