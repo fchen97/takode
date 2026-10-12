@@ -98,9 +98,18 @@ describe("landing queue manager", () => {
   const mapping = (n: number): LandingCommitMapping[] => [
     { source: sha(100 + n), target: sha(200 + n), subject: `change ${n}` },
   ];
-  /** Let the queue's deferred work (starting runners, telling owners) run. */
+  /** Wait for deferred pumps and their serialized persistence without driving a sweep. */
   const settle = async () => {
-    for (let i = 0; i < 5; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+    // A timer lets an already-scheduled pump enter the operation queue. The
+    // snapshot then waits behind its real lease/store writes; timer ticks alone
+    // can finish before those writes and leave the runner unavailable.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await queue.snapshot(target);
+    // Launch callbacks run outside that queue. A failed launch enqueues its
+    // cleanup after the first barrier, so drain that work before assertions or
+    // teardown reuse the mutable fixture callbacks for the next test.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await queue.snapshot(target);
   };
   /** The runner the latest launch started, as its routes would see it. */
   const runner = (request = launches.at(-1)!): LandingRunnerCaller =>
