@@ -236,7 +236,9 @@ describe("sessions on this machine's own node", () => {
   // forgets the node process it had, so the next server does not wait for it.
   it("starts the process here when the node is not ready", async () => {
     const launcher = await coordinatorWith({ hostProcId: "proc-from-before" }, () => false);
-    await launcher.relaunch("s-1");
+    // The missing saved process already triggers a restore-driven relaunch.
+    // Requesting another here races it and launches two adapters, obscuring
+    // the local fallback behavior this test is meant to exercise.
     await waitFor(() => sdkAdapterLaunches.length === 1);
     expect(sdkAdapterLaunches[0]!.options.spawnProcess).toBeUndefined();
     expect(launcher.getSession("s-1")?.hostProcId).toBeUndefined();

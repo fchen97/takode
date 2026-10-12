@@ -63,30 +63,10 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 
-vi.mock("./git-utils.js", () => ({
-  getRepoInfo: vi.fn(() => null),
-  getRepoInfoAsync: vi.fn(async () => null),
-  listBranches: vi.fn(() => []),
-  listBranchesAsync: vi.fn(async () => []),
-  listWorktrees: vi.fn(() => []),
-  listWorktreesAsync: vi.fn(async () => []),
-  ensureWorktree: vi.fn(),
-  ensureWorktreeAsync: vi.fn(),
-  gitFetch: vi.fn(() => ({ success: true, output: "" })),
-  gitFetchAsync: vi.fn(async () => ({ success: true, output: "" })),
-  gitPull: vi.fn(() => ({ success: true, output: "" })),
-  gitPullAsync: vi.fn(async () => ({ success: true, output: "" })),
-  checkoutBranch: vi.fn(),
-  checkoutBranchAsync: vi.fn(async () => {}),
-  removeWorktree: vi.fn(),
-  removeWorktreeAsync: vi.fn(async () => ({ removed: true })),
-  isWorktreeDirty: vi.fn(() => false),
-  isWorktreeDirtyAsync: vi.fn(async () => false),
-  archiveBranchAsync: vi.fn(async () => true),
-  resolveDefaultBranch: vi.fn(() => "main"),
-  getBranchStatus: vi.fn(() => ({ ahead: 0, behind: 0 })),
-  deleteArchivedRefAsync: vi.fn(async () => {}),
-}));
+vi.mock("./git-utils.js", async () => {
+  const { createMockGitUtils } = await import("./routes.post-api-sessions-create.test-helpers.js");
+  return createMockGitUtils();
+});
 
 vi.mock("./session-names.js", () => ({
   getName: vi.fn(() => undefined),
@@ -98,60 +78,10 @@ vi.mock("./session-names.js", () => ({
   _resetForTest: vi.fn(),
 }));
 
-vi.mock("./settings-manager.js", () => ({
-  getSettings: vi.fn(() => ({
-    serverName: "",
-    serverId: "",
-    pushoverUserKey: "",
-    pushoverApiToken: "",
-    pushoverDelaySeconds: 30,
-    pushoverEnabled: true,
-    pushoverEventFilters: { needsInput: true, review: true, error: true },
-    pushoverBaseUrl: "",
-    maxKeepAlive: 0,
-    heavyRepoModeEnabled: false,
-    namerConfig: { backend: "claude" },
-    autoNamerEnabled: true,
-    transcriptionConfig: {
-      apiKey: "",
-      baseUrl: "https://api.openai.com/v1",
-      enhancementEnabled: true,
-      enhancementModel: "gpt-5-mini",
-    },
-    editorConfig: { editor: "none" },
-    sleepInhibitorEnabled: false,
-    sleepInhibitorDurationMinutes: 5,
-    updatedAt: 0,
-  })),
-  updateSettings: vi.fn((patch) => ({
-    serverName: "",
-    serverId: "",
-    pushoverUserKey: patch.pushoverUserKey ?? "",
-    pushoverApiToken: patch.pushoverApiToken ?? "",
-    pushoverDelaySeconds: patch.pushoverDelaySeconds ?? 30,
-    pushoverEnabled: patch.pushoverEnabled ?? true,
-    pushoverEventFilters: patch.pushoverEventFilters ?? { needsInput: true, review: true, error: true },
-    pushoverBaseUrl: patch.pushoverBaseUrl ?? "",
-    maxKeepAlive: patch.maxKeepAlive ?? 0,
-    heavyRepoModeEnabled: patch.heavyRepoModeEnabled ?? false,
-    namerConfig: patch.namerConfig ?? { backend: "claude" },
-    autoNamerEnabled: patch.autoNamerEnabled ?? true,
-    transcriptionConfig: patch.transcriptionConfig ?? {
-      apiKey: "",
-      baseUrl: "https://api.openai.com/v1",
-      enhancementEnabled: true,
-      enhancementModel: "gpt-5-mini",
-    },
-    editorConfig: patch.editorConfig ?? { editor: "none" },
-    sleepInhibitorEnabled: patch.sleepInhibitorEnabled ?? false,
-    sleepInhibitorDurationMinutes: patch.sleepInhibitorDurationMinutes ?? 5,
-    updatedAt: Date.now(),
-  })),
-  getServerName: vi.fn(() => ""),
-  setServerName: vi.fn(),
-  getServerId: vi.fn(() => "test-server-id"),
-  getClaudeUserDefaultModel: vi.fn(async () => ""),
-}));
+vi.mock("./settings-manager.js", async () => {
+  const { createMockSettingsManager } = await import("./routes.post-api-sessions-create.test-helpers.js");
+  return createMockSettingsManager();
+});
 
 const mockGetUsageLimits = vi.hoisted(() => vi.fn());
 vi.mock("./usage-limits.js", () => ({
