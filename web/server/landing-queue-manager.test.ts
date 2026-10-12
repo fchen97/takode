@@ -297,7 +297,9 @@ describe("landing queue manager", () => {
 
   it("renews the queue's lease on every heartbeat and refuses one after the lease is gone", async () => {
     await submit("a", 1);
-    await settle();
+    // Starting the runner includes asynchronous persistence; timer turns alone
+    // do not establish that its credentials are ready for the heartbeat test.
+    await vi.waitFor(() => expect(launches).toHaveLength(1));
     const caller = runner();
     const claim = await queue.claim(caller, target);
     const before = (await leases.getStatus(LEASE)).leases[0]!.expiresAt;
@@ -410,8 +412,17 @@ describe("landing queue manager", () => {
     // The escape hatch for a leader when the server cannot start runners.
     launchFailure = new Error("the host is offline");
     await submit("a", 1);
-    await settle();
-    await leases.acquire({ resourceKey: LEASE, callerSessionId: "porter", purpose: "classic port" });
+    // A failed launch records its failure before saving and releasing its lease.
+    // Wait for both facts so the porter actually owns the lease under test.
+    await vi.waitFor(async () => {
+      expect((await queue.snapshot(target)).launchProblem).toBeDefined();
+      expect(leases.holdsLease(LEASE, OWNER)).toBe(false);
+    });
+    expect(
+      await leases.acquire({ resourceKey: LEASE, callerSessionId: "porter", purpose: "classic port" }),
+    ).toMatchObject({
+      status: "acquired",
+    });
     const byHand = { callerSessionId: "leader", target, baseCheckout: "/leader/companion", hostId: "laptop" };
     await expect(queue.startRunnerByHand(byHand)).rejects.toThrow("held by porter");
     await leases.release(LEASE, "porter");
