@@ -69,3 +69,87 @@ export function createMockTracker() {
     isWorktreeInUse: vi.fn(() => false),
   } as any;
 }
+
+export function createMockSettingsManager() {
+  return {
+    getSettings: vi.fn(() => ({
+      serverName: "",
+      serverId: "",
+      pushoverUserKey: "",
+      pushoverApiToken: "",
+      pushoverDelaySeconds: 30,
+      pushoverEnabled: true,
+      pushoverEventFilters: { needsInput: true, review: true, error: true },
+      pushoverBaseUrl: "",
+      maxKeepAlive: 0,
+      heavyRepoModeEnabled: false,
+      namerConfig: { backend: "claude" },
+      autoNamerEnabled: true,
+      transcriptionConfig: {
+        apiKey: "",
+        baseUrl: "https://api.openai.com/v1",
+        enhancementEnabled: true,
+        enhancementModel: "gpt-5-mini",
+      },
+      editorConfig: { editor: "none" },
+      sleepInhibitorEnabled: false,
+      sleepInhibitorDurationMinutes: 5,
+      updatedAt: 0,
+    })),
+    updateSettings: vi.fn((patch) => ({
+      serverName: "",
+      serverId: "",
+      pushoverUserKey: patch.pushoverUserKey ?? "",
+      pushoverApiToken: patch.pushoverApiToken ?? "",
+      pushoverDelaySeconds: patch.pushoverDelaySeconds ?? 30,
+      pushoverEnabled: patch.pushoverEnabled ?? true,
+      pushoverEventFilters: patch.pushoverEventFilters ?? { needsInput: true, review: true, error: true },
+      pushoverBaseUrl: patch.pushoverBaseUrl ?? "",
+      maxKeepAlive: patch.maxKeepAlive ?? 0,
+      heavyRepoModeEnabled: patch.heavyRepoModeEnabled ?? false,
+      namerConfig: patch.namerConfig ?? { backend: "claude" },
+      autoNamerEnabled: patch.autoNamerEnabled ?? true,
+      transcriptionConfig: patch.transcriptionConfig ?? {
+        apiKey: "",
+        baseUrl: "https://api.openai.com/v1",
+        enhancementEnabled: true,
+        enhancementModel: "gpt-5-mini",
+      },
+      editorConfig: patch.editorConfig ?? { editor: "none" },
+      sleepInhibitorEnabled: patch.sleepInhibitorEnabled ?? false,
+      sleepInhibitorDurationMinutes: patch.sleepInhibitorDurationMinutes ?? 5,
+      updatedAt: Date.now(),
+    })),
+    getServerName: vi.fn(() => ""),
+    setServerName: vi.fn(),
+    getServerId: vi.fn(() => "test-server-id"),
+    getClaudeUserDefaultModel: vi.fn(async () => ""),
+  };
+}
+
+export function createMockGitUtils() {
+  return {
+    getRepoInfo: vi.fn(() => null),
+    getRepoInfoAsync: vi.fn(async () => null),
+    listBranches: vi.fn(() => []),
+    listBranchesAsync: vi.fn(async () => []),
+    listWorktrees: vi.fn(() => []),
+    listWorktreesAsync: vi.fn(async () => []),
+    ensureWorktree: vi.fn(),
+    ensureWorktreeAsync: vi.fn(),
+    gitFetch: vi.fn(() => ({ success: true, output: "" })),
+    gitFetchAsync: vi.fn(async () => ({ success: true, output: "" })),
+    gitPull: vi.fn(() => ({ success: true, output: "" })),
+    gitPullAsync: vi.fn(async () => ({ success: true, output: "" })),
+    checkoutBranch: vi.fn(),
+    checkoutBranchAsync: vi.fn(async () => {}),
+    removeWorktree: vi.fn(),
+    removeWorktreeAsync: vi.fn(async () => ({ removed: true })),
+    isWorktreeDirty: vi.fn(() => false),
+    isWorktreeDirtyAsync: vi.fn(async () => false),
+    archiveBranchAsync: vi.fn(async () => true),
+    resolveDefaultBranch: vi.fn(() => "main"),
+    getBranchStatus: vi.fn(() => ({ ahead: 0, behind: 0 })),
+    deleteArchivedRefAsync: vi.fn(async () => {}),
+  };
+}
