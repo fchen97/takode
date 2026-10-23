@@ -12,7 +12,7 @@ vi.mock("./claude-sdk-adapter.js", () => ({
   },
 }));
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CliLauncher } from "./cli-launcher.js";
@@ -316,6 +316,29 @@ describe("sessions on this machine's own node", () => {
     await waitFor(() => sdkAdapterLaunches.length === 1);
     expect(sdkAdapterLaunches[0]!.options.reattach).toBe(true);
     expect(launcher.getSession("s-1")?.injectedSystemPrompt).toBe(current);
+  });
+
+  // Launches add the user's private default instructions (from the private docs
+  // folder) to Takode's. A process started with them runs the current
+  // instructions, so the restarted server must include them when it compares,
+  // or it would end every such process instead of taking it over.
+  it("takes over a process whose current instructions include private defaults", async () => {
+    const privateDocsDir = join(tempDir, "private-docs");
+    mkdirSync(privateDocsDir);
+    writeFileSync(join(privateDocsDir, "default-agent-guidance.md"), "Private default guidance for this machine.\n");
+    vi.stubEnv("TAKODE_PRIVATE_DOCS_DIR", privateDocsDir);
+    try {
+      const current = await currentInstructions();
+      expect(current).toContain("Private default guidance for this machine.");
+      const launcher = await restartWithProcessRunning(current);
+
+      link!.drop();
+      await waitFor(() => sdkAdapterLaunches.length === 1);
+      expect(sdkAdapterLaunches[0]!.options.reattach).toBe(true);
+      expect(launcher.getSession("s-1")?.injectedSystemPrompt).toBe(current);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   // A process keeps the instructions it started with (Claude no longer records

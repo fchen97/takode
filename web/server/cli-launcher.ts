@@ -184,18 +184,24 @@ export class CliLauncher {
       for (const [sessionId, proc] of this.hostReattach) {
         const info = this.sessions.get(sessionId);
         if (!info || processHostOf(info) !== status.hostId) continue;
-        if (this.runsCurrentInstructions(info)) {
-          void this.relaunch(sessionId);
-          continue;
-        }
-        // Stopped like an idle session, so it starts afresh on its next message.
-        this.hostReattach.delete(sessionId);
-        this.endOutdatedHostProcess(sessionId, proc);
-        info.state = "exited";
-        info.exitCode = -1;
-        this.persistState();
+        void this.takeOverOrEndHostProcess(sessionId, info, proc);
       }
     });
+  }
+
+  private async takeOverOrEndHostProcess(sessionId: string, info: SdkSessionInfo, proc: RemoteProcess): Promise<void> {
+    if (await this.runsCurrentInstructions(info)) {
+      void this.relaunch(sessionId);
+      return;
+    }
+    // A relaunch took the process while the instructions were being built.
+    if (this.hostReattach.get(sessionId) !== proc) return;
+    // Stopped like an idle session, so it starts afresh on its next message.
+    this.hostReattach.delete(sessionId);
+    this.endOutdatedHostProcess(sessionId, proc);
+    info.state = "exited";
+    info.exitCode = -1;
+    this.persistState();
   }
 
   /**
@@ -203,14 +209,14 @@ export class CliLauncher {
    * instructions this server builds for it. A running process keeps the
    * instructions it started with, so one with other instructions is ended
    * rather than taken over, and the session gets the new ones when it next
-   * starts. A session saved without a record is taken over.
+   * starts. A session saved without a record is taken over. Launches add the
+   * private default instructions, so the comparison includes them too.
    */
-  private runsCurrentInstructions(info: SdkSessionInfo): boolean {
+  private async runsCurrentInstructions(info: SdkSessionInfo): Promise<boolean> {
     if (info.injectedSystemPrompt === undefined) return true;
     const backend = info.backendType ?? "claude-sdk";
-    return (
-      info.injectedSystemPrompt === this.buildInstructions(info, backend, this.relaunchExtraInstructions(info, backend))
-    );
+    const extraInstructions = await composePrivateDefaultInstructions(this.relaunchExtraInstructions(info, backend));
+    return info.injectedSystemPrompt === this.buildInstructions(info, backend, extraInstructions);
   }
 
   private endOutdatedHostProcess(sessionId: string, proc: RemoteProcess): void {
@@ -906,7 +912,7 @@ export class CliLauncher {
     // Taken now, before any await, so a second relaunch cannot take it as well.
     let reattachHostProcess = this.hostReattach.get(sessionId);
     this.hostReattach.delete(sessionId);
-    if (reattachHostProcess && !this.runsCurrentInstructions(info)) {
+    if (reattachHostProcess && !(await this.runsCurrentInstructions(info))) {
       this.endOutdatedHostProcess(sessionId, reattachHostProcess);
       reattachHostProcess = undefined;
     }
