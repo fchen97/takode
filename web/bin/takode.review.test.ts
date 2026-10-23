@@ -1,6 +1,6 @@
 import { execFile, spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -95,9 +95,9 @@ it("reports the lines a map leaves out", async () => {
   expect(result.stderr).toContain("b.ts: added lines 1 are in no stop; add the file to a summary or a stop.");
 });
 
-it("publishes the map with the diff and range read from git", async () => {
+/** Publishes a guided review through a local fixture server; returns the CLI result and the request body it sent. */
+async function publishReview(args: string[]) {
   // All HTTP effects go to this local fixture server.
-  const { repo, mapPath, map } = await makeRepo();
   let received: any;
   const server = createServer(async (req, res) => {
     res.setHeader("content-type", "application/json");
@@ -124,22 +124,37 @@ it("publishes the map with the diff and range read from git", async () => {
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   try {
-    const result = await runTakode(
-      ["review", mapPath, "--thread", "q-7", "--repo", repo],
-      (server.address() as AddressInfo).port,
-    );
-    expect(result.stderr).toBe("");
-    expect(result.stdout.trim()).toBe("Published guided review to q-7: 1 question, 2 files, 3 lines in stops.");
-    expect(received.map).toEqual(map);
-    expect(received.threadKey).toBe("q-7");
-    expect(received.diff).toContain("+export const c = 4;");
-    expect(received.range).toMatchObject({ repo: "widgets", commits: [{ subject: "feat: change b and add c" }] });
-    expect(received.range.base).toMatch(/^[0-9a-f]{40}$/);
-    // The full change is read later from this checkout.
-    expect(received.range.repoPaths).toEqual([await realpath(repo)]);
+    const result = await runTakode(args, (server.address() as AddressInfo).port);
+    return { result, received };
   } finally {
     server.close();
   }
+}
+
+it("publishes the map with the diff and range read from git", async () => {
+  const { repo, mapPath, map } = await makeRepo();
+  const { result, received } = await publishReview(["review", mapPath, "--thread", "q-7", "--repo", repo]);
+  expect(result.stderr).toBe("");
+  expect(result.stdout.trim()).toBe("Published guided review to q-7: 1 question, 2 files, 3 lines in stops.");
+  expect(received.map).toEqual(map);
+  expect(received.threadKey).toBe("q-7");
+  expect(received.diff).toContain("+export const c = 4;");
+  expect(received.range).toMatchObject({ repo: "widgets", commits: [{ subject: "feat: change b and add c" }] });
+  expect(received.range.base).toMatch(/^[0-9a-f]{40}$/);
+  // The full change is read later from this checkout.
+  expect(received.range.repoPaths).toEqual([await realpath(repo)]);
+});
+
+// Git reports the checkout with symlinks resolved, so a repository reached
+// through a symlinked path (macOS's /var, or any link) must still be listed
+// once, not once per spelling of the same folder.
+it("lists a checkout reached through a symlink only once", async () => {
+  const { root, repo, mapPath } = await makeRepo();
+  const link = join(root, "widgets-link");
+  await symlink(repo, link);
+  const { result, received } = await publishReview(["review", mapPath, "--thread", "q-7", "--repo", link]);
+  expect(result.stderr).toBe("");
+  expect(received.range.repoPaths).toEqual([await realpath(repo)]);
 });
 
 it("shares a review from another session into a thread without any repository", async () => {
