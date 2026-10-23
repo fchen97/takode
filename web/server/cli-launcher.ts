@@ -195,14 +195,14 @@ export class CliLauncher {
    * instructions it started with; one with other instructions is still taken
    * over, so no turn is cut off, and the server restarts the session at its
    * first idle moment (see `HostTakeovers`). A session saved
-   * without a record counts as current.
+   * without a record counts as current. Launches add the private default
+   * instructions, so the comparison includes them too.
    */
-  private runsCurrentInstructions(info: SdkSessionInfo): boolean {
+  private async runsCurrentInstructions(info: SdkSessionInfo): Promise<boolean> {
     if (info.injectedSystemPrompt === undefined) return true;
     const backend = info.backendType ?? "claude-sdk";
-    return (
-      info.injectedSystemPrompt === this.buildInstructions(info, backend, this.relaunchExtraInstructions(info, backend))
-    );
+    const extraInstructions = await composePrivateDefaultInstructions(this.relaunchExtraInstructions(info, backend));
+    return info.injectedSystemPrompt === this.buildInstructions(info, backend, extraInstructions);
   }
 
   /** A process started now runs `instructions`, which Session Info shows and the next restart compares. */

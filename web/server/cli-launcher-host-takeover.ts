@@ -58,8 +58,11 @@ export interface HostTakeoversDeps {
   persist: () => void;
   /** Launch the session, which takes over its waiting process. */
   relaunch: (sessionId: string) => void;
-  /** Whether the session's recorded instructions are the ones this server builds for it. */
-  runsCurrentInstructions: (info: SdkSessionInfo) => boolean;
+  /**
+   * Whether the session's recorded instructions are the ones this server builds for it. Asynchronous
+   * because the launch adds the private default instructions, which are read from disk.
+   */
+  runsCurrentInstructions: (info: SdkSessionInfo) => boolean | Promise<boolean>;
 }
 
 /**
@@ -77,6 +80,8 @@ export interface HostTakeoversDeps {
 export class HostTakeovers {
   private readonly waiting = new Map<string, RemoteProcess>();
   private readonly outdated = new Set<string>();
+  /** Instruction checks started when a process was taken, read when its takeover finishes. */
+  private readonly instructionChecks = new Map<string, Promise<void>>();
   /**
    * A process that outlived the previous server ended without being taken over. A turn it was in was
    * cut off, and input sent while it waited for its host is still queued, so the server continues or
@@ -134,7 +139,7 @@ export class HostTakeovers {
       return undefined;
     }
     // Cleared again if the process is started afresh after all (see `startedAfresh`).
-    if (!this.deps.runsCurrentInstructions(info)) this.outdated.add(info.sessionId);
+    this.checkInstructions(info);
     return proc;
   }
 
@@ -156,11 +161,54 @@ export class HostTakeovers {
 
   /** The session got a fresh process, which runs the current instructions. */
   startedAfresh(sessionId: string): void {
+    this.instructionChecks.delete(sessionId);
     this.outdated.delete(sessionId);
   }
 
-  /** A launch that took over a process finished; report it when the process runs outdated instructions. */
+  /**
+   * A launch that took over a process finished; report it when the process runs outdated instructions.
+   * The check started when the process was taken has usually settled by now (a launch builds the same
+   * instructions); otherwise the report waits for it.
+   */
   tookOver(sessionId: string): void {
+    const check = this.instructionChecks.get(sessionId);
+    if (check) {
+      void check.then(() => this.reportOutdatedTakeover(sessionId));
+      return;
+    }
+    this.reportOutdatedTakeover(sessionId);
+  }
+
+  /**
+   * Compare the taken process's instructions with the current ones. A process found outdated is marked
+   * unless it was started afresh meanwhile; a failed check leaves it unmarked, like a current one.
+   */
+  private checkInstructions(info: SdkSessionInfo): void {
+    const sessionId = info.sessionId;
+    let current: boolean | Promise<boolean>;
+    try {
+      current = this.deps.runsCurrentInstructions(info);
+    } catch {
+      return;
+    }
+    if (typeof current === "boolean") {
+      if (!current) this.outdated.add(sessionId);
+      return;
+    }
+    const check: Promise<void> = current.then(
+      (isCurrent) => {
+        if (this.instructionChecks.get(sessionId) !== check) return;
+        this.instructionChecks.delete(sessionId);
+        if (!isCurrent) this.outdated.add(sessionId);
+      },
+      () => {
+        if (this.instructionChecks.get(sessionId) === check) this.instructionChecks.delete(sessionId);
+      },
+    );
+    this.instructionChecks.set(sessionId, check);
+  }
+
+  private reportOutdatedTakeover(sessionId: string): void {
     if (!this.runsOutdatedInstructions(sessionId)) return;
     console.log(
       `[cli-launcher] Session ${sessionTag(sessionId)} runs outdated instructions; took over its process and will restart it once it is idle`,

@@ -46,7 +46,7 @@ describe("buildWorkspaceTokenUsageByModel", () => {
         {
           sessionId: "s1",
           source: {
-            state: { backend_type: "claude", model: "claude-sonnet" },
+            state: { backend_type: "claude-sdk", model: "claude-sonnet" },
             messageHistory: [
               resultWithModelUsage({
                 "claude-sonnet": {
@@ -108,7 +108,7 @@ describe("buildWorkspaceTokenUsageByModel", () => {
       {
         sessionId: "s1",
         source: {
-          state: { backend_type: "claude", model: "" },
+          state: { backend_type: "claude-sdk", model: "" },
           messageHistory: [
             resultWithModelUsage({
               "": { inputTokens: 100, outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 },
@@ -226,8 +226,8 @@ describe("buildWorkspaceTokenUsageByModel", () => {
                 { timestamp: day3, backend: "codex", model: "gpt-5.5", totalTokens: 100 },
                 { timestamp: day2, backend: "codex", model: "gpt-5.5", totalTokens: 150 },
                 { timestamp: day1, backend: "codex", model: "gpt-5.5", totalTokens: 220 },
-                { timestamp: day2, backend: "claude", model: "opus 4.7", inputTokens: 20, outputTokens: 0 },
-                { timestamp: day1, backend: "claude", model: "opus 4.7", inputTokens: 45, outputTokens: 0 },
+                { timestamp: day2, backend: "claude-sdk", model: "opus 4.7", inputTokens: 20, outputTokens: 0 },
+                { timestamp: day1, backend: "claude-sdk", model: "opus 4.7", inputTokens: 45, outputTokens: 0 },
               ],
             },
           },
@@ -258,7 +258,7 @@ describe("buildWorkspaceTokenUsageByModel", () => {
         {
           sessionId: "s1",
           source: {
-            state: { backend_type: "claude", model: "opus 4.7" },
+            state: { backend_type: "claude-sdk", model: "opus 4.7" },
             messageHistory: [
               resultWithModelUsage({
                 "opus 4.7": {
@@ -346,7 +346,7 @@ describe("buildWorkspaceTokenUsageByModel", () => {
       return {
         sessionId: `session-${sessionIndex}`,
         source: {
-          state: { backend_type: "claude" as const, model: "claude-sonnet" },
+          state: { backend_type: "claude-sdk" as const, model: "claude-sonnet" },
           messageHistory: trackedHistory,
         },
       };
@@ -399,7 +399,7 @@ describe("buildWorkspaceTokenUsageByModel", () => {
       {
         sessionId: "session-1",
         source: {
-          state: { backend_type: "claude" as const, model: "claude-sonnet" },
+          state: { backend_type: "claude-sdk" as const, model: "claude-sonnet" },
           messageHistory: history,
         },
       },

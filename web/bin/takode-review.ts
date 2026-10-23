@@ -176,7 +176,8 @@ async function readGitRange(
       return { sha, subject: subject.join("\t") };
     });
   // A worktree's own folder name says little; name the repository its shared Git folder belongs to.
-  const commonDir = resolve(repo, (await git("rev-parse", "--git-common-dir")).trim());
+  // Absolute and symlink-resolved, like --show-toplevel below, so the same folder is not listed twice.
+  const commonDir = (await git("rev-parse", "--path-format=absolute", "--git-common-dir")).trim();
   const mainCheckout = basename(commonDir) === ".git" ? dirname(commonDir) : null;
   const name = mainCheckout ? basename(mainCheckout) : basename(commonDir).replace(/\.git$/, "");
   // Where the full change is read from later: this checkout, then the main one, which keeps the
