@@ -12,3 +12,10 @@ export interface SessionTokenUsageSample {
   reasoningOutputTokens?: number;
   codexModelAttributionLimited?: boolean;
 }
+
+/** Latest cumulative Claude usage for one model, as reported by result.modelUsage. */
+export interface ClaudeModelTokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cachedInputTokens: number;
+}

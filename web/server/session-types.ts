@@ -67,7 +67,7 @@ import type {
   SessionContextLengthSnapshot,
   SessionLifecycleEvent,
 } from "./codex-context-types.js";
-import type { SessionTokenUsageSample } from "./workspace-token-usage-types.js";
+import type { ClaudeModelTokenUsage, SessionTokenUsageSample } from "./workspace-token-usage-types.js";
 export type {
   CodexAutoPauseRecoveryLink,
   CodexAutoPauseRecoveryOutcome,
@@ -126,7 +126,7 @@ export type {
   SessionContextLengthSnapshot,
   SessionLifecycleEvent,
 } from "./codex-context-types.js";
-export type { SessionTokenUsageSample } from "./workspace-token-usage-types.js";
+export type { ClaudeModelTokenUsage, SessionTokenUsageSample } from "./workspace-token-usage-types.js";
 
 // Types for the WebSocket bridge between Claude Code CLI and the browser
 
@@ -1663,6 +1663,11 @@ export interface SessionState extends BackendSessionState {
     cachedInputTokens: number;
     modelContextWindow: number;
   };
+  /**
+   * Latest cumulative Claude usage per model, kept in state so workspace token
+   * totals survive when message history is not loaded (archived sessions).
+   */
+  claude_model_usage?: Record<string, ClaudeModelTokenUsage>;
   /** Debug lifecycle events for the session info panel. */
   lifecycle_events?: SessionLifecycleEvent[];
   // Codex-specific rate limits (forwarded from account/rateLimits/updated)

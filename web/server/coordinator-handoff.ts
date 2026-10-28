@@ -13,6 +13,13 @@ import {
   writeCoordinatorMove,
 } from "./coordinator-lock.js";
 import { machineNameError, readMachineName } from "./machine-identity.js";
+import {
+  mergeCarriedOverTokenUsage,
+  parseCarriedOverTokenUsage,
+  pickCarriedOverTokenUsageState,
+  TOKEN_USAGE_CARRYOVER_FILE,
+  type CarriedOverTokenUsageSession,
+} from "./workspace-token-usage-carryover.js";
 import { MEMORY_MACHINE_STAMPS_MARKER, QUEST_MACHINE_STAMPS_MARKER, SESSION_NUMBERS_FILE } from "./constants.js";
 
 /**
@@ -29,8 +36,10 @@ import { MEMORY_MACHINE_STAMPS_MARKER, QUEST_MACHINE_STAMPS_MARKER, SESSION_NUMB
  * checksum before writing, and moves aside anything it would replace.
  *
  * Only unarchived sessions move; archived history stays in the departing
- * machine's files. Machine-local state stays too: logs, leases, worktree
- * checkouts and auxiliary worktree registrations, agent artifacts.
+ * machine's files, and only its token usage comes along (see
+ * `workspace-token-usage-carryover.ts`). Machine-local state stays too: logs,
+ * leases, worktree checkouts and auxiliary worktree registrations, agent
+ * artifacts.
  */
 
 export interface HandoffExportOptions {
@@ -441,6 +450,25 @@ async function planHandoff(input: {
     if (isRecord(hot.state)) setOrDelete(hot.state, "host_id", relabel(hot.state.host_id));
     entries.push({ path, content: JSON.stringify(hot) });
   }
+  // Archived sessions stay behind, but their token usage counts toward the workspace totals.
+  const carryoverPath = `${sessionsDir}/${TOKEN_USAGE_CARRYOVER_FILE}`;
+  const leftBehind: CarriedOverTokenUsageSession[] = [];
+  for (const info of launcher) {
+    const sessionId = info.sessionId;
+    if (typeof sessionId !== "string" || movingIds.has(sessionId)) continue;
+    // An unreadable session file only loses that session's usage; it must not stop the move.
+    const hot = await readJsonIfExists<JsonRecord>(join(companion, sessionsDir, `${sessionId}.json`)).catch(() => null);
+    const state = pickCarriedOverTokenUsageState(hot?.state, now.getTime());
+    if (!state) continue;
+    const sessionNum = Number.isInteger(info.sessionNum) ? { sessionNum: info.sessionNum as number } : {};
+    leftBehind.push({ sessionId, ...sessionNum, state });
+  }
+  const previousCarryover = await readJsonIfExists<unknown>(join(companion, carryoverPath)).catch(() => {
+    notes.push(`${carryoverPath} is unreadable, so token usage carried over by earlier moves is left out.`);
+    return null;
+  });
+  const carriedOver = mergeCarriedOverTokenUsage(parseCarriedOverTokenUsage(previousCarryover), leftBehind);
+  if (carriedOver.sessions.length > 0) entries.push({ path: carryoverPath, content: JSON.stringify(carriedOver) });
   const acknowledgements = `${sessionsDir}/model-provenance-migration-acknowledgements.json`;
   if (await exists(join(companion, acknowledgements))) entries.push({ path: acknowledgements });
 

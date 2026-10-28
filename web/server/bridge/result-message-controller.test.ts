@@ -256,6 +256,47 @@ describe("result-message-controller", () => {
     expect(deps.onTurnCompleted).toHaveBeenCalledWith(session);
   });
 
+  // Workspace token totals must survive when history is not loaded (archived
+  // sessions, sessions carried over from another coordinator), so the result's
+  // per-model usage is also kept in state, stamped like the history row.
+  it("keeps the result's per-model token usage in session state", () => {
+    const session = makeSession();
+    const deps = makeDeps();
+    const modelUsage = {
+      "claude-sonnet-4-5-20250929": {
+        inputTokens: 10,
+        outputTokens: 5,
+        cacheReadInputTokens: 3,
+        cacheCreationInputTokens: 1,
+        costUSD: 0,
+        contextWindow: 200_000,
+        maxOutputTokens: 64_000,
+      },
+    };
+
+    handleResultMessage(session, makeResult({ modelUsage }), deps);
+
+    const result = session.messageHistory.at(-1) as Extract<BrowserIncomingMessage, { type: "result" }>;
+    expect(session.state.claude_model_usage).toEqual({
+      "claude-sonnet-4-5-20250929": { inputTokens: 10, outputTokens: 5, cachedInputTokens: 4 },
+    });
+    expect(session.state.token_usage_samples).toEqual([
+      {
+        timestamp: result.timestamp,
+        backend: "claude-sdk",
+        model: "claude-sonnet-4-5-20250929",
+        inputTokens: 10,
+        outputTokens: 5,
+        cachedInputTokens: 4,
+      },
+    ]);
+
+    // A replayed result changes nothing.
+    deps.hasResultReplay.mockReturnValue(true);
+    handleResultMessage(session, makeResult({ modelUsage: { ...modelUsage } }), deps);
+    expect(session.state.token_usage_samples).toHaveLength(1);
+  });
+
   it("stamps a routed answer before accepting Ready from the same assistant row", () => {
     const session = makeSession();
     session.messageHistory.push(directUser("u1"));

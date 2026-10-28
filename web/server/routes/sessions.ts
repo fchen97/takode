@@ -1210,7 +1210,7 @@ export function createSessionsRoutes(ctx: RouteContext) {
     );
   });
   registerArchivedSessionPageRoute(api, sessionSnapshotDeps);
-  registerWorkspaceTokenUsageRoute(api, { launcher, wsBridge });
+  registerWorkspaceTokenUsageRoute(api, { launcher, wsBridge, sessionStore });
   registerSessionSearchRoute(api, { launcher, wsBridge, authenticateCompanionCallerOptional });
   registerGlobalStarredMessageSearchRoute(api, { launcher, wsBridge });
   registerGlobalRecentAsksRoute(api, { launcher, wsBridge });

@@ -1,7 +1,11 @@
 import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
-import { buildWorkspaceTokenUsageByModel, WorkspaceTokenUsageSummaryCache } from "./workspace-token-usage.js";
-import type { BrowserIncomingMessage } from "./session-types.js";
+import {
+  buildWorkspaceTokenUsageByModel,
+  recordClaudeResultTokenUsage,
+  WorkspaceTokenUsageSummaryCache,
+} from "./workspace-token-usage.js";
+import type { BrowserIncomingMessage, SessionState } from "./session-types.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -422,5 +426,123 @@ describe("buildWorkspaceTokenUsageByModel", () => {
     );
 
     expect(cache.getSummary(sessions, now + 30_000).totalTokens).toBe(25);
+  });
+});
+
+describe("Claude usage kept in session state", () => {
+  // Message history is not loaded for archived sessions, and sessions carried
+  // over from another coordinator have none, so Claude totals must also be
+  // readable from session state.
+  type ClaudeState = Pick<SessionState, "backend_type" | "model" | "claude_model_usage" | "token_usage_samples">;
+  const sonnetUsage = (inputTokens: number) => ({
+    "claude-sonnet": { inputTokens, outputTokens: 5, cacheReadInputTokens: 3, cacheCreationInputTokens: 2 },
+  });
+
+  it("records the latest cumulative usage per model and a timestamped sample for each", () => {
+    const state: Pick<SessionState, "claude_model_usage" | "token_usage_samples"> = {};
+    recordClaudeResultTokenUsage(state, sonnetUsage(10) as never, 1_000);
+    recordClaudeResultTokenUsage(
+      state,
+      {
+        ...sonnetUsage(40),
+        "claude-haiku": { inputTokens: 7, outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 },
+      } as never,
+      2_000,
+    );
+
+    expect(state.claude_model_usage).toEqual({
+      "claude-sonnet": { inputTokens: 40, outputTokens: 5, cachedInputTokens: 5 },
+      "claude-haiku": { inputTokens: 7, outputTokens: 0, cachedInputTokens: 0 },
+    });
+    expect(state.token_usage_samples).toEqual([
+      {
+        timestamp: 1_000,
+        backend: "claude-sdk",
+        model: "claude-sonnet",
+        inputTokens: 10,
+        outputTokens: 5,
+        cachedInputTokens: 5,
+      },
+      {
+        timestamp: 2_000,
+        backend: "claude-sdk",
+        model: "claude-sonnet",
+        inputTokens: 40,
+        outputTokens: 5,
+        cachedInputTokens: 5,
+      },
+      { timestamp: 2_000, backend: "claude-sdk", model: "claude-haiku", inputTokens: 7 },
+    ]);
+  });
+
+  it("counts an archived Claude session from state when its history is not loaded", () => {
+    const now = new Date(2026, 0, 8, 12).getTime();
+    const state: ClaudeState = { backend_type: "claude-sdk", model: "claude-sonnet" };
+    recordClaudeResultTokenUsage(state, sonnetUsage(10) as never, now - 2 * DAY_MS);
+    recordClaudeResultTokenUsage(state, sonnetUsage(40) as never, now - DAY_MS);
+
+    const summary = buildWorkspaceTokenUsageByModel(
+      [{ sessionId: "archived", source: { state, messageHistory: [] } }],
+      now,
+    );
+
+    expect(summary.models).toEqual([
+      {
+        model: "claude-sonnet",
+        totalTokens: 50,
+        inputTokens: 40,
+        outputTokens: 5,
+        cachedInputTokens: 5,
+        reasoningOutputTokens: 0,
+        sessionCount: 1,
+      },
+    ]);
+    expect(summary.history.ranges.find((range) => range.id === "week")?.totalTokens).toBe(30);
+  });
+
+  it("does not double count a live session whose result is both in history and in state", () => {
+    // The state sample carries the same timestamp and cumulative value as the
+    // history-derived one, so it adds no daily growth and no extra total.
+    const now = new Date(2026, 0, 8, 12).getTime();
+    const state: ClaudeState = { backend_type: "claude-sdk", model: "claude-sonnet" };
+    const history: BrowserIncomingMessage[] = [];
+    for (const [inputTokens, timestamp] of [
+      [10, now - 2 * DAY_MS],
+      [40, now - DAY_MS],
+    ]) {
+      recordClaudeResultTokenUsage(state, sonnetUsage(inputTokens) as never, timestamp);
+      history.push(resultWithModelUsage(sonnetUsage(inputTokens), timestamp));
+    }
+
+    const summary = buildWorkspaceTokenUsageByModel(
+      [{ sessionId: "live", source: { state, messageHistory: history } }],
+      now,
+    );
+
+    expect(summary.totalTokens).toBe(50);
+    expect(summary.history.ranges.find((range) => range.id === "week")?.totalTokens).toBe(30);
+  });
+
+  it("falls back to the summed claude_token_details for sessions recorded before the per-model map", () => {
+    const summary = buildWorkspaceTokenUsageByModel([
+      {
+        sessionId: "old-archived",
+        source: {
+          state: {
+            backend_type: "claude-sdk",
+            model: "claude-opus",
+            claude_token_details: {
+              inputTokens: 4,
+              outputTokens: 700,
+              cachedInputTokens: 25_000,
+              modelContextWindow: 1_000_000,
+            },
+          },
+          messageHistory: [],
+        },
+      },
+    ]);
+
+    expect(summary.models).toMatchObject([{ model: "claude-opus", totalTokens: 25_704, sessionCount: 1 }]);
   });
 });

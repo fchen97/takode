@@ -1,5 +1,6 @@
 import type {
   BrowserIncomingMessage,
+  ClaudeModelTokenUsage,
   CLIResultMessage,
   SessionState,
   SessionTokenUsageSample,
@@ -54,7 +55,15 @@ export interface WorkspaceTokenUsageByModelSummary {
 }
 
 export interface WorkspaceTokenUsageSessionSource {
-  state?: Pick<SessionState, "backend_type" | "model" | "codex_token_details" | "token_usage_samples">;
+  state?: Pick<
+    SessionState,
+    | "backend_type"
+    | "model"
+    | "codex_token_details"
+    | "claude_token_details"
+    | "claude_model_usage"
+    | "token_usage_samples"
+  >;
   messageHistory?: BrowserIncomingMessage[];
 }
 
@@ -227,8 +236,25 @@ function toCumulativeSample(sessionId: string, sample: SessionTokenUsageSample):
 }
 
 interface CollectedClaudeUsage {
-  usageByModel: Map<string, { inputTokens: number; outputTokens: number; cachedInputTokens: number }>;
+  usageByModel: Map<string, ClaudeModelTokenUsage>;
   samples: CumulativeSample[];
+}
+
+function claudeModelUsageEntries(
+  modelUsage: CLIResultMessage["modelUsage"] | undefined,
+): Array<[string, ClaudeModelTokenUsage]> {
+  const entries: Array<[string, ClaudeModelTokenUsage]> = [];
+  for (const [rawModel, usage] of Object.entries(modelUsage ?? {})) {
+    const model = normalizeModelLabel(rawModel);
+    if (!model || !usage) continue;
+    const nextUsage = {
+      inputTokens: positiveNumber(usage.inputTokens),
+      outputTokens: positiveNumber(usage.outputTokens),
+      cachedInputTokens: positiveNumber(usage.cacheReadInputTokens) + positiveNumber(usage.cacheCreationInputTokens),
+    };
+    if (totalFromParts(nextUsage) > 0) entries.push([model, nextUsage]);
+  }
+  return entries;
 }
 
 function collectClaudeUsageFromHistory(
@@ -236,7 +262,7 @@ function collectClaudeUsageFromHistory(
   messageHistory: BrowserIncomingMessage[] | undefined,
   limitedReasons: Set<string>,
 ): CollectedClaudeUsage {
-  const usageByModel = new Map<string, { inputTokens: number; outputTokens: number; cachedInputTokens: number }>();
+  const usageByModel = new Map<string, ClaudeModelTokenUsage>();
   const samples: CumulativeSample[] = [];
   if (!messageHistory) return { usageByModel, samples };
 
@@ -246,15 +272,7 @@ function collectClaudeUsageFromHistory(
     if (!modelUsage) continue;
     const timestamp = validTimestamp(message.timestamp);
 
-    for (const [rawModel, usage] of Object.entries(modelUsage)) {
-      const model = normalizeModelLabel(rawModel);
-      if (!model || !usage) continue;
-      const nextUsage = {
-        inputTokens: positiveNumber(usage.inputTokens),
-        outputTokens: positiveNumber(usage.outputTokens),
-        cachedInputTokens: positiveNumber(usage.cacheReadInputTokens) + positiveNumber(usage.cacheCreationInputTokens),
-      };
-      if (totalFromParts(nextUsage) <= 0) continue;
+    for (const [model, nextUsage] of claudeModelUsageEntries(modelUsage)) {
       usageByModel.set(model, nextUsage);
 
       if (!timestamp) {
@@ -272,6 +290,38 @@ function collectClaudeUsageFromHistory(
   }
 
   return { usageByModel, samples };
+}
+
+/**
+ * Claude usage a session keeps in state. Message history is not loaded for
+ * archived sessions, so totals fall back to the per-model map recorded on each
+ * result, and for sessions from before that map to the summed
+ * `claude_token_details`, attributed to the session's model.
+ */
+function addPersistedClaudeUsage(
+  usageByModel: Map<string, ClaudeModelTokenUsage>,
+  state: WorkspaceTokenUsageSessionSource["state"],
+): void {
+  if (!state || state.backend_type === "codex") return;
+  // The state map is updated with every result, so it is at least as recent as history.
+  for (const [rawModel, usage] of Object.entries(state.claude_model_usage ?? {})) {
+    const model = normalizeModelLabel(rawModel);
+    const persisted = usage ? claudeUsageFromState(usage) : null;
+    if (model && persisted) usageByModel.set(model, persisted);
+  }
+  if (usageByModel.size > 0) return;
+  const model = normalizeModelLabel(state.model);
+  const details = state.claude_token_details ? claudeUsageFromState(state.claude_token_details) : null;
+  if (model && details) usageByModel.set(model, details);
+}
+
+function claudeUsageFromState(usage: ClaudeModelTokenUsage): ClaudeModelTokenUsage | null {
+  const parts = {
+    inputTokens: positiveNumber(usage.inputTokens),
+    outputTokens: positiveNumber(usage.outputTokens),
+    cachedInputTokens: positiveNumber(usage.cachedInputTokens),
+  };
+  return totalFromParts(parts) > 0 ? parts : null;
 }
 
 function buildHistogramRanges(
@@ -390,6 +440,26 @@ export function appendTokenUsageSample(
   state.token_usage_samples = [...existing, nextSample].slice(-maxSamples);
 }
 
+/**
+ * Keep a Claude result's cumulative per-model usage in session state, beside
+ * the result in message history, so archived sessions (whose history is not
+ * loaded) and sessions carried over from another coordinator still count.
+ * Samples share the result's timestamp, so the copy derived from history adds
+ * nothing to daily buckets.
+ */
+export function recordClaudeResultTokenUsage(
+  state: Pick<SessionState, "claude_model_usage" | "token_usage_samples">,
+  modelUsage: CLIResultMessage["modelUsage"] | undefined,
+  timestamp: number,
+): void {
+  const entries = claudeModelUsageEntries(modelUsage);
+  if (entries.length === 0) return;
+  state.claude_model_usage = { ...state.claude_model_usage, ...Object.fromEntries(entries) };
+  for (const [model, usage] of entries) {
+    appendTokenUsageSample(state, { timestamp, backend: "claude-sdk", model, ...usage });
+  }
+}
+
 export function buildWorkspaceTokenUsageByModel(
   sessions: WorkspaceTokenUsageSession[],
   now = Date.now(),
@@ -410,6 +480,7 @@ export function buildWorkspaceTokenUsageByModel(
       const normalized = toCumulativeSample(session.sessionId, sample);
       if (normalized) historySamples.push(normalized);
     }
+    addPersistedClaudeUsage(claudeUsage.usageByModel, state);
     for (const [model, usage] of claudeUsage.usageByModel) {
       addUsageToBucket(buckets, session.sessionId, model, usage);
     }
@@ -453,6 +524,8 @@ interface WorkspaceTokenUsageFingerprint {
   lastMessage: BrowserIncomingMessage | undefined;
   tokenSamples: SessionTokenUsageSample[] | undefined;
   tokenSamplesLength: number;
+  claudeModelUsage: SessionState["claude_model_usage"];
+  claudeTokenDetails: SessionState["claude_token_details"];
   lastTokenSample: SessionTokenUsageSample | undefined;
   backendType: SessionState["backend_type"] | undefined;
   model: string | undefined;
@@ -477,6 +550,8 @@ function buildSessionFingerprint(
     lastMessage: messageHistory?.[messageHistory.length - 1],
     tokenSamples,
     tokenSamplesLength: tokenSamples?.length ?? 0,
+    claudeModelUsage: source?.state?.claude_model_usage,
+    claudeTokenDetails: source?.state?.claude_token_details,
     lastTokenSample: tokenSamples?.[tokenSamples.length - 1],
     backendType: source?.state?.backend_type,
     model: source?.state?.model,
@@ -497,6 +572,8 @@ function fingerprintsMatch(left: WorkspaceTokenUsageFingerprint, right: Workspac
     left.lastMessage === right.lastMessage &&
     left.tokenSamples === right.tokenSamples &&
     left.tokenSamplesLength === right.tokenSamplesLength &&
+    left.claudeModelUsage === right.claudeModelUsage &&
+    left.claudeTokenDetails === right.claudeTokenDetails &&
     left.lastTokenSample === right.lastTokenSample &&
     left.backendType === right.backendType &&
     left.model === right.model &&

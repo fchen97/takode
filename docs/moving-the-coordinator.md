@@ -32,7 +32,8 @@ up rather than shipping scripts for it. The examples use the machine names
     same path (see the next section).
 - **Stays on the old machine:**
   - archived sessions, whose history remains in its files and is not searchable
-    on the new coordinator;
+    on the new coordinator (only their token usage moves, so the workspace token
+    totals keep counting them);
   - logs and resource leases;
   - auxiliary worktree registrations;
   - worktree checkouts and agent artifacts;
