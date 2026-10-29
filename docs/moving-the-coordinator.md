@@ -28,8 +28,8 @@ up rather than shipping scripts for it. The examples use the machine names
     server state;
   - your instructions and skills store (`~/.companion/user-instructions` and
     `~/.companion/user-skills`). A store folder that is a link moves as the same
-    link, so clone the checkout it points to on the new machine first, at the
-    same path (see the next section).
+    link, so the checkout it points to must exist on the new machine where the
+    link expects it (see the next section).
 - **Stays on the old machine:**
   - archived sessions, whose history remains in its files and is not searchable
     on the new coordinator (only their token usage moves, so the workspace token
@@ -38,6 +38,27 @@ up rather than shipping scripts for it. The examples use the machine names
   - auxiliary worktree registrations;
   - worktree checkouts and agent artifacts;
   - per-machine data such as Codex homes and the machine's name.
+- **Tied to the coordinator's machine, so neither moved nor taken over by the
+  new one.** Set these up on purpose:
+  - **Private default instructions** in `~/.companion/private-docs` (or
+    `TAKODE_PRIVATE_DOCS_DIR`). The coordinator reads them when it builds the
+    instructions of every session, on any machine, but the handoff does not
+    copy them. Copy the folder to the new machine before the cutover, or new
+    sessions start without them.
+  - **The sleep inhibitor.** On macOS the coordinator keeps its own machine
+    awake while any session is working. A host does not, so once the old
+    machine is a host, it can sleep in the middle of its sessions' turns. Keep
+    it awake by other means while its sessions work, for example
+    `caffeinate -i` in a terminal.
+  - **The server time zone.** Timers such as `--at 3pm`, timestamps and
+    schedules use the **Time Zone** setting, and an empty setting means the
+    machine's own zone. The setting moves, but an empty one silently switches
+    to the new machine's zone (often UTC on a server or cloud workspace). Set
+    the zone you want before the export.
+- **Absolute paths in moved data keep the old home.** Quest image paths and the
+  quest store's `legacyBackupDir` still name the old machine's home directory.
+  The UI serves images by ID and is not affected, but agents on the new machine
+  may see these old paths in quest output.
 - **Numbering and epochs continue.** New sessions are numbered above every old
   session, archived ones included, so `#N` references stay unique. The new
   coordinator starts with a higher coordinator epoch, so hosts accept it.
@@ -68,7 +89,8 @@ are handled today and explain it to the user:
 3. **Recommend switching** when the user runs sessions on more than one
    machine: most such users want one copy. Suggest keeping the content in a
    private Git repository, with both store folders linking into one checkout of
-   it on the coordinator, so edits are versioned and survive a move.
+   it on the coordinator, so edits are versioned and survive a move. Make those
+   links relative (see step 5).
 4. **Migrate with the user's approval**, following the skill: pick the
    machine that holds the user's real copy (usually the one they have worked on
    longest), fill the store from it or from the repository, and take over each
@@ -77,8 +99,20 @@ are handled today and explain it to the user:
    copies and links (`takode user-content remove-skills`), so no session loads
    a skill twice.
 5. **When moving** with a store that links into a checkout, clone that
-   repository on the new machine at the same path before the import, or the
-   moved links point nowhere. A store of plain folders moves as is.
+   repository on the new machine before the import, or the moved links point
+   nowhere. The links move exactly as written, so where to clone it depends on
+   them:
+   - A **relative** link, such as
+     `~/.companion/user-skills -> ../Code/<repo>/user-skills`, works wherever
+     the new home is: clone the repository at the same place under the home
+     directory (`~/Code/<repo>`).
+   - An **absolute** link needs the same absolute path, which is often
+     impossible, for example between macOS (`/Users/<name>`) and Linux
+     (`/home/<name>`). Either make the links relative before the export, or
+     re-point them on the new machine after the import and before starting the
+     coordinator.
+
+   A store of plain folders moves as is.
 
 ## Prerequisites
 
@@ -112,7 +146,10 @@ host must reach the host port.
 
 - **Bind to loopback** when the coordinator should only be reached through
   tunnels: start it with `COMPANION_HOST=127.0.0.1`. With browser login off,
-  anyone who can reach the main port can use Takode.
+  anyone who can reach the main port can use Takode. On a cloud workspace that
+  runs as a container on a shared cluster network this is a must: the server
+  listens on all interfaces by default, which exposes it to everything else on
+  that network.
 - **The old machine becomes a host.** It needs two paths to the new
   coordinator: one to the host port for its `takode node`, and one to the main
   port for its browser. When only the old machine can open connections (for
@@ -133,6 +170,12 @@ host must reach the host port.
   start hook (some cloud workspaces do not), have a watchdog on another machine
   start it when unreachable, and note that it stays down after a restart until
   something does.
+- **Cloud workspaces restart differently.** When the workspace is a container,
+  a restart or a template update ends every process in it, including the
+  coordinator, its node and their restart loops, and often resets everything
+  outside the persistent home volume. Keep the checkout, `bun`, the agent CLIs
+  and `~/.companion` in the home volume, check how the workspace restarts and
+  updates, and avoid updating it just before the move.
 
 ## Rehearse
 
@@ -164,6 +207,12 @@ rehearsal coordinator (`POST /api/hosts {"name":"laptop-rehearsal"}`, or
 session there; the moved sessions themselves stay on the never-connected
 `laptop` host. Stop the rehearsal server and its node afterwards.
 
+This node test touches the old machine's real files when an instructions and
+skills store exists. The rehearsal copy carries the store and delivers it to
+every host that connects, so the old machine's real `CLAUDE.md`, `AGENTS.md`
+and skill links are rewritten from the copy. That is harmless while the copy
+matches the live store, but skip the test or accept it knowingly.
+
 **Keep the staging copy.** Copying 1-2 GB through a relayed tunnel can take
 many minutes. At cutover, rsync the fresh package onto the staged copy; only
 changed bytes travel, which took about a minute in a real move.
@@ -183,6 +232,8 @@ follow it and stop on anything unexpected. Its outline:
 3. Retire any test coordinator and its watchdog on the new machine, so nothing
    restarts it mid-cutover.
 4. Pre-sync a fresh rehearsal package to the staging folder.
+5. Set up what belongs to the coordinator's machine (see "What happens to
+   what"): copy the private default instructions and set the time zone.
 
 **Downtime:**
 
