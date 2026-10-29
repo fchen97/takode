@@ -26,6 +26,8 @@ Either folder, or any entry in it, may be a link. The recommended setup keeps th
 
 Takode follows the links, and notices changes made through them, such as an edit or a `git pull` in the checkout.
 
+Make the links relative to `~/.companion` (`ln -s ../Code/<your-repo>/user-skills ~/.companion/user-skills`). A relative link keeps working when the coordinator [moves](moving-the-coordinator.md) to a machine whose home directory has another path, such as from macOS (`/Users/<name>`) to Linux (`/home/<name>`); an absolute one would have to be re-pointed there.
+
 Write rules that hold on every machine. A rule that applies to only one machine can say so ("on the laptop, ..."); every Takode session is told which machine it runs on.
 
 ## What Takode does with them
