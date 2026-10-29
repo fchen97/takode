@@ -429,7 +429,12 @@ export async function lintMemory(
 export async function listMemorySpaces(options: MemoryRepoOptions = {}): Promise<MemorySpaceInfo[]> {
   const currentRepo = await ensureMemoryRepo(options);
   const resolved = resolveMemoryRepoInternal(options);
-  const serverIndex = await readServerMemoryIndexes(resolved.baseRoot);
+  // This server's own entries first (the sort is stable), so a stale entry that another
+  // server identity left for one of our repos, such as one written under a test's
+  // identity, can't make that repo look like another server's.
+  const serverIndex = (await readServerMemoryIndexes(resolved.baseRoot)).sort(
+    (a, b) => Number(b.serverId === resolved.serverId) - Number(a.serverId === resolved.serverId),
+  );
   const spaces = new Map<string, MemorySpaceInfo>();
 
   const addSpace = async (input: {
