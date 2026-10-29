@@ -1,4 +1,3 @@
-import { mkdirSync } from "node:fs";
 import { readdir, readFile, writeFile, unlink, mkdir, rm, stat, rename } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -148,9 +147,6 @@ type QuestStoreBootstrapResult =
       mode: "no_data";
       liveStoreFile: string;
     };
-
-// Cold-path: synchronous mkdir at module load is fine
-mkdirSync(QUESTMASTER_DIR, { recursive: true });
 
 async function ensureDir(): Promise<void> {
   await mkdir(QUESTMASTER_DIR, { recursive: true });
@@ -1110,6 +1106,23 @@ function removeLiveQuest(store: LiveQuestStore, questId: string): LiveQuestStore
 }
 
 // ─── Public API ──────────────────────────────────────────────────────────────
+
+/**
+ * Whether this machine holds a quest store, current or legacy, checked without
+ * creating anything. A CLI with no server to ask reads the local store only
+ * when there is one, so a machine without one never gains an empty store.
+ */
+export async function hasLocalQuestStore(): Promise<boolean> {
+  for (const file of [LIVE_STORE_FILE, LEGACY_COLOCATED_LIVE_STORE_FILE]) {
+    const found = await stat(file).then(
+      () => true,
+      () => false,
+    );
+    if (found) return true;
+  }
+  const files = await readdir(QUESTMASTER_DIR).catch(() => [] as string[]);
+  return files.some((file) => /^q-\d+-v\d+\.json$/.test(file));
+}
 
 /** List the latest version of every quest. */
 export async function listQuests(): Promise<QuestmasterTask[]> {

@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -131,5 +131,27 @@ describe("quest CLI on a machine without the quest store", () => {
     const listed = await runQuest(["list"], serverHome, port, onHost);
     expect(listed.status).toBe(1);
     expect(listed.stdout).not.toContain("Stale host copy");
+  });
+
+  // A host session whose Takode variables did not reach it (its Codex config
+  // dropped them) looks like a CLI on any machine with no server named. With no
+  // store of its own to read, it must fail clearly instead of creating an empty
+  // store and answering "not found".
+  it("fails clearly and creates no store when no server answers and this machine has none", async () => {
+    const port = server.port;
+    await server.stop();
+    const unnamed = await runQuest(["show", "q-1"], hostHome, port, { COMPANION_PORT: undefined });
+    expect(unnamed.status).toBe(1);
+    expect(unnamed.stderr).toContain("No Takode server is configured");
+    expect(unnamed.stderr).toContain("no quest store of its own");
+
+    const unreachable = await runQuest(["list"], hostHome, port);
+    expect(unreachable.status).toBe(1);
+    expect(unreachable.stderr).toContain("Cannot reach");
+    expect(unreachable.stderr).toContain("no quest store of its own");
+
+    const companionEntries = await readdir(join(hostHome, ".companion")).catch(() => [] as string[]);
+    expect(companionEntries).not.toContain("questmaster");
+    expect(companionEntries).not.toContain("questmaster-live");
   });
 });

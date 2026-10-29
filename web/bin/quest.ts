@@ -48,6 +48,7 @@ import {
   markQuestVerificationInboxUnread,
   deleteQuest,
   cancelQuestForOwner,
+  hasLocalQuestStore,
 } from "../server/quest-store.js";
 import type { QuestHistoryView, QuestmasterTask } from "../server/quest-types.js";
 import { hasQuestReviewMetadata, isQuestReviewInboxUnread } from "../server/quest-types.js";
@@ -343,6 +344,7 @@ const questServer = createQuestServerClient({
   authHeaders: companionAuthHeaders,
   die,
   remoteHost: runsOnRemoteHost(),
+  hasLocalStore: hasLocalQuestStore,
 });
 
 /**

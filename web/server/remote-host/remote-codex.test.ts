@@ -51,9 +51,13 @@ describe("Codex on a remote host", () => {
       },
       5_000,
     );
-    // The host's own Codex replaces the coordinator's binary path.
+    // The host's own Codex replaces the coordinator's binary path, and the launch
+    // names TAKODE_REMOTE_HOST so the session's Codex config passes it to commands.
     expect(prepareCalls).toEqual([
-      { sessionId: "s-1", options: { codexBinary: "/opt/host/codex", codexHome: undefined } },
+      {
+        sessionId: "s-1",
+        options: { codexBinary: "/opt/host/codex", codexHome: undefined, env: { TAKODE_REMOTE_HOST: "1" } },
+      },
     ]);
     expect(prepared.adapterSettings).toEqual({ sandboxMode: "workspace-write" });
 

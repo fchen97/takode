@@ -178,6 +178,16 @@ describe("stream CLI", () => {
     expect(unnamed.stderr).toContain("No Takode server is configured");
   });
 
+  // A host session whose Takode variables did not reach it looks like a CLI with
+  // no server named. With no streams of its own, it fails clearly and loading the
+  // stream store never creates an empty one.
+  it("fails clearly and creates nothing when no server is named and this machine keeps no streams", async () => {
+    const show = await runStream(["list"], { ...env, COMPANION_PORT: undefined });
+    expect(show.status).toBe(1);
+    expect(show.stderr).toContain("keeps no streams of its own");
+    expect(existsSync(join(cliHome, ".companion", "streams"))).toBe(false);
+  });
+
   it("prints a compact handoff for reviewer usability checks", async () => {
     await runStream(["create", "Nebius salvage", "--summary", "Canonical artifact repaired", "--owner", "1014"], env);
     await runStream(

@@ -450,11 +450,14 @@ export class HostAgent {
    * configuration, and keep the command for the `spawn` that follows.
    */
   private async prepareCodex(request: Extract<HostRequest, { kind: "prepare_codex" }>): Promise<HostResponse> {
+    const requested = request.options as Record<string, unknown>;
     const options = {
-      ...(request.options as Record<string, unknown>),
+      ...requested,
       // The coordinator's binary and Codex home paths describe its own machine.
       codexBinary: this.program("codex"),
       codexHome: undefined,
+      // Named here too, not only at spawn, so the session's Codex config passes it to commands.
+      env: { ...(requested.env as Record<string, string> | undefined), [REMOTE_HOST_ENV]: "1" },
     };
     const prepare = this.options.prepareCodexLaunch ?? prepareCodexWithThisInstall;
     const spec = await prepare(request.sessionId, request.info, options);

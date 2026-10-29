@@ -1,5 +1,5 @@
 // The live quest store file: where it lives, how it is loaded, migrated and written.
-import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, readdirSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -136,6 +136,8 @@ describe("live quest store", () => {
         },
       ],
     });
+    // Loading the store creates no directory of its own, so legacy fixtures make theirs.
+    mkdirSync(questDir(), { recursive: true });
     writeFileSync(
       join(questDir(), "q-1-v1.json"),
       JSON.stringify(
@@ -271,6 +273,7 @@ describe("live quest store", () => {
   it("bootstrap fails loudly when the preferred live store is unreadable", async () => {
     mkdirSync(liveStoreDir(), { recursive: true });
     writeFileSync(liveStorePath(), "{broken json", "utf-8");
+    mkdirSync(questDir(), { recursive: true });
     writeFileSync(
       join(questDir(), "q-1-v1.json"),
       JSON.stringify(
@@ -515,5 +518,33 @@ describe("live quest store", () => {
 
     const version = await questStore.getQuestVersion("q-1-v2");
     expect(version).toMatchObject({ id: "q-1-v2", title: "Legacy v2" });
+  });
+});
+
+// ===========================================================================
+// hasLocalQuestStore
+// ===========================================================================
+// A quest CLI with no server to ask reads this machine's store only when there
+// is one. Importing the store and checking for it must create nothing, or a
+// machine without a store (a remote host) would gain an empty one.
+describe("hasLocalQuestStore", () => {
+  it("is false on a machine without a store, and creates nothing", async () => {
+    expect(await questStore.hasLocalQuestStore()).toBe(false);
+    expect(readdirSync(tempDir)).toEqual([]);
+  });
+
+  it("finds the live store, the colocated legacy store, or legacy version files", async () => {
+    writeLiveStoreFixture({ format: "mutable_current_record", version: 1, nextQuestNumber: 1, quests: [] });
+    expect(await questStore.hasLocalQuestStore()).toBe(true);
+    rmSync(liveStoreDir(), { recursive: true, force: true });
+
+    mkdirSync(questDir(), { recursive: true });
+    expect(await questStore.hasLocalQuestStore()).toBe(false);
+    writeFileSync(legacyCoLocatedLiveStorePath(), "{}", "utf-8");
+    expect(await questStore.hasLocalQuestStore()).toBe(true);
+    rmSync(legacyCoLocatedLiveStorePath());
+
+    writeFileSync(join(questDir(), "q-3-v1.json"), "{}", "utf-8");
+    expect(await questStore.hasLocalQuestStore()).toBe(true);
   });
 });

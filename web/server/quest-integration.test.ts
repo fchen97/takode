@@ -154,7 +154,9 @@ describe("ensureQuestmasterIntegration", () => {
     expect(streamWrapper).not.toContain("/repo/worktrees/wt-1/web/bin/stream.ts");
   });
 
-  it("writes ~/.local/bin quest, memory, and stream shims that delegate to ~/.companion/bin", async () => {
+  it("writes ~/.local/bin quest, memory, stream, and takode shims that delegate to ~/.companion/bin", async () => {
+    // Codex runs commands through a login shell, and some machines' /etc/profile
+    // resets PATH and drops ~/.companion/bin; ~/.local/bin usually survives.
     await ensureQuestmasterIntegration(3456, "/repo/web");
 
     expect(fsMocks.mkdirSync).toHaveBeenCalledWith("/home/tester/.local/bin", { recursive: true });
@@ -176,6 +178,12 @@ describe("ensureQuestmasterIntegration", () => {
       "utf-8",
     );
     expect(fsMocks.chmodSync).toHaveBeenCalledWith("/home/tester/.local/bin/stream", 0o755);
+    expect(fsMocks.writeFileSync).toHaveBeenCalledWith(
+      "/home/tester/.local/bin/takode",
+      expect.stringContaining('exec "$HOME/.companion/bin/takode" "$@"'),
+      "utf-8",
+    );
+    expect(fsMocks.chmodSync).toHaveBeenCalledWith("/home/tester/.local/bin/takode", 0o755);
   });
 
   it("writes a ~/.local/bin/rg compatibility shim", async () => {

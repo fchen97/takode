@@ -9,7 +9,9 @@
  * never do, and nothing does on a remote host, whose coordinator holds the
  * only copy.
  */
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import {
   isStreamWriteCommand,
   streamCommandInputFiles,
@@ -44,8 +46,23 @@ function mayRunLocally(): boolean {
   return !isStreamWriteCommand(args) && !runsOnRemoteHost();
 }
 
-/** Reads from this machine's streams when its own server is not running. */
+/**
+ * Reads from this machine's streams when its own server is not running. A
+ * machine that keeps none fails instead, before loading the store would create
+ * an empty one.
+ */
 async function runLocally(): Promise<StreamCommandResult> {
+  const streamsDir = join(process.env.HOME || homedir(), ".companion", "streams");
+  const hasStreams = await stat(streamsDir).then(
+    () => true,
+    () => false,
+  );
+  if (!hasStreams) {
+    return failure(
+      "No Takode server answered, and this machine keeps no streams of its own: " +
+        "run the command from a Takode session or set COMPANION_PORT to the server's port.",
+    );
+  }
   const context = await commandContext();
   const { runStreamCommand } = await import("../server/stream-command.js");
   return runStreamCommand(args, { ...context, readTextFile: readInputFile });

@@ -319,8 +319,9 @@ describe("quest CLI status safety", () => {
         tmp,
       );
 
+      // The command's read of the quest already finds no server and no local store to ask.
       expect(result.status).toBe(1);
-      expect(result.stderr).toContain("Quest changes are written by the Takode server");
+      expect(result.stderr).toContain("No Takode server is configured");
       expect(existsSync(join(tmp, ".companion", "questmaster-live", "store.json"))).toBe(false);
       expect(existsSync(join(tmp, ".companion", "questmaster", "_quest_counter.json"))).toBe(false);
     } finally {
