@@ -40,7 +40,21 @@ export function createQuestServerClient(deps: {
   die: (message: string) => never;
   /** This CLI runs on a remote host: the coordinator holds the store, so reads never fall back to local files. */
   remoteHost?: boolean;
+  /** Whether this machine has a quest store to fall back to; reads without one fail instead of creating one. */
+  hasLocalStore?: () => Promise<boolean>;
 }): QuestServerClient {
+  /** No server answered: the caller reads this machine's store, if it has one. */
+  async function fallBackToLocal(problem: string): Promise<undefined> {
+    if (deps.remoteHost) deps.die(remoteHostNeedsServer(problem));
+    if (deps.hasLocalStore && !(await deps.hasLocalStore())) {
+      deps.die(
+        `${problem} This machine has no quest store of its own to read either: ` +
+          "run the command from a Takode session or set COMPANION_PORT to the server's port.",
+      );
+    }
+    return undefined;
+  }
+
   return {
     async request<T>(method: string, path: string, body?: unknown): Promise<QuestServerResponse<T>> {
       const port = deps.port;
@@ -68,10 +82,7 @@ export function createQuestServerClient(deps: {
     },
     async read<T>(path: string, options: { allowNotFound?: boolean } = {}): Promise<T | null | undefined> {
       const port = deps.port;
-      if (!port) {
-        if (deps.remoteHost) deps.die(remoteHostNeedsServer("No Takode server is configured for this command."));
-        return undefined;
-      }
+      if (!port) return fallBackToLocal("No Takode server is configured for this command.");
       let response: Response;
       let text: string;
       try {
@@ -82,9 +93,8 @@ export function createQuestServerClient(deps: {
         });
         text = await response.text();
       } catch (error) {
-        if (deps.remoteHost) deps.die(remoteHostNeedsServer(describeReadFailure(error, port)));
         // Reads are safe to answer from the local store when the server on this machine is down.
-        return undefined;
+        return fallBackToLocal(describeReadFailure(error, port));
       }
       let body: { error?: unknown } | null;
       try {
@@ -92,13 +102,10 @@ export function createQuestServerClient(deps: {
       } catch {
         // Not an answer from this route: an older server without it (its frontend page or a
         // plain 404), or a remote host's proxy reporting that the coordinator is unreachable.
-        if (!deps.remoteHost) return undefined;
-        deps.die(
-          remoteHostNeedsServer(
-            response.ok || response.status === 404
-              ? "The Takode server does not support this read yet; restart it on the current build."
-              : text.trim() || `The Takode server returned HTTP ${response.status}.`,
-          ),
+        return fallBackToLocal(
+          response.ok || response.status === 404
+            ? "The Takode server does not support this read yet; restart it on the current build."
+            : text.trim() || `The Takode server returned HTTP ${response.status}.`,
         );
       }
       if (response.ok) return body as T;

@@ -336,6 +336,7 @@ describe("getQuest", () => {
       verificationItems: [{ text: "verify", checked: true }],
       completedAt: Date.now(),
     };
+    mkdirSync(questDir(), { recursive: true });
     await writeFile(join(questDir(), "q-1-v1.json"), JSON.stringify(legacy), "utf-8");
 
     const q = await questStore.getQuest("q-1");
@@ -361,6 +362,7 @@ describe("getQuest", () => {
       verificationItems: [{ text: "verify legacy", checked: false }],
       verificationInboxUnread: true,
     };
+    mkdirSync(questDir(), { recursive: true });
     await writeFile(join(questDir(), "q-1-v3.json"), JSON.stringify(legacy), "utf-8");
 
     const q = await questStore.getQuest("q-1");

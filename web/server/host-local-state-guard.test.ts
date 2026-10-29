@@ -55,6 +55,8 @@ const INVENTORY: Record<string, string> = {
   "bin/memory.ts -> server/memory-command.ts": LOCAL_READ_FALLBACK,
   "bin/memory.ts -> server/settings-manager.ts":
     "Reads (never writes) the slug of the server on this machine, for the local read fallback",
+  "bin/stream.ts: streams":
+    "Checks, without creating it, whether this machine keeps streams before the local read fallback loads the store",
   "bin/stream.ts -> server/stream-command.ts": LOCAL_READ_FALLBACK,
   "bin/quest.ts -> server/quest-store.ts": CODEX_QUEST_WORKER,
   "bin/quest.ts -> server/session-names.ts": CODEX_QUEST_WORKER,

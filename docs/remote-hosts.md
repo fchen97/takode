@@ -41,6 +41,16 @@ unreachable they say so instead. Only facts of the machine stay on it: its
 name, its host token, the options `takode node` was started with, and working
 checkouts.
 
+Codex sessions get Takode's variables even when the machine's
+`~/.codex/config.toml` keeps the environment from commands
+(`[shell_environment_policy]` with `inherit = "core"` or `"none"`): the
+session's copy of the config passes what that policy passed plus Takode's own
+variables, and still nothing else. Codex runs commands in a login shell, which
+on some machines resets `PATH`, so `takode node` also puts `quest`, `memory`,
+`stream` and `takode` in `~/.local/bin`. A `quest` or `stream` command that
+finds no server to ask and no data of its own on the machine fails with an
+error instead of creating an empty store.
+
 ## Setup
 
 1. **Register the host on the coordinator.** Run `takode host add <name>` or use
