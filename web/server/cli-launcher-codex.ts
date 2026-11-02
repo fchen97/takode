@@ -35,7 +35,7 @@ import {
   removeTopLevelTomlSettings,
   resolveConfigPathValue,
   upsertBooleanSettingInSection,
-  upsertShellEnvironmentIncludeOnly,
+  upsertShellEnvironmentPolicy,
   upsertTopLevelNumberSetting,
   upsertTopLevelStringSetting,
   usesMaiLitellmProvider,
@@ -1321,13 +1321,12 @@ async function ensureCodexSessionConfig(
     next = upsertBooleanSettingInSection(next, codexFeaturesHeader, codexImageGenerationFeature, false);
   }
   const providerEnvKeys = getSelectedProviderEnvKeys(next);
-  next = upsertShellEnvironmentIncludeOnly(next, [
-    "HOME",
-    "PATH",
-    ...NON_INTERACTIVE_GIT_EDITOR_ENV_KEYS,
-    ...providerEnvKeys,
-    ...envVars,
-  ]);
+  // The provider's key passes only when the user's policy lets the environment through.
+  next = upsertShellEnvironmentPolicy(
+    next,
+    ["HOME", "PATH", ...NON_INTERACTIVE_GIT_EDITOR_ENV_KEYS, ...envVars],
+    providerEnvKeys,
+  );
   const modelId = options?.model || readTopLevelStringSetting(next, "model");
   const leaderLaunch = options?.leaderLaunch ?? !options?.nonLeaderAutoCompactThresholdPercent;
   const desiredContextCapacity = coercePositiveNumber(options?.codexContextCapacityTokens);

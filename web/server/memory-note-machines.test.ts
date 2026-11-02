@@ -264,4 +264,43 @@ describe("stampExistingMemoryNotesInOwnSpaces", () => {
     ]);
     expect(noteMachines(await readFile(join(repo.root, "topic", "a.md"), "utf-8"))).toEqual(["laptop"]);
   });
+
+  // A process that once ran under another server identity (a test's mocked id read from a
+  // leaked settings file) left index entries claiming this server's repos. They must not make
+  // those repos look foreign, which would silently skip stamping them. The index is read in
+  // directory order, so several stale identities make it near certain one is read before ours.
+  it("stamps this server's repos even when stale index entries from other identities claim them", async () => {
+    const { workstreamMemoryService } = await import("./workstream-memory-service.js");
+    const roots: string[] = [];
+    for (const sessionSpaceSlug of ["Takode", "Slack"]) {
+      const repo = await workstreamMemoryService.ensureRepo({ sessionSpaceSlug });
+      await mkdir(join(repo.root, "topic"), { recursive: true });
+      await writeFile(join(repo.root, "topic", "a.md"), note(["type: knowledge"]));
+      const git = (...args: string[]) => execFileAsync("git", ["-C", repo.root, ...args]);
+      await git("add", "-A");
+      await git("-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-q", "-m", "Seed");
+      roots.push(repo.root);
+    }
+    for (const staleId of ["0-stale", "a-stale", "test-uuid", "zz-stale"]) {
+      const dir = join(home, ".companion", "memory", ".servers", staleId);
+      await mkdir(dir, { recursive: true });
+      for (const [sessionSpaceSlug, root] of [
+        ["Takode", roots[0]],
+        ["Slack", roots[1]],
+      ]) {
+        const entry = { serverId: staleId, serverSlug: "prod", sessionSpaceSlug, root, updatedAt: "2026-09-11" };
+        await writeFile(join(dir, `${sessionSpaceSlug}.json`), JSON.stringify(entry));
+      }
+    }
+
+    const spaces = await workstreamMemoryService.spaces();
+    expect(spaces.filter((space) => roots.includes(space.root)).map((space) => space.serverId)).toEqual([
+      "server-1",
+      "server-1",
+    ]);
+    const results = await stampExistingMemoryNotesInOwnSpaces("laptop");
+    expect(results.map((result) => [result.root, result.outcome]).sort()).toEqual(
+      roots.map((root) => [root, "stamped"]).sort(),
+    );
+  });
 });
