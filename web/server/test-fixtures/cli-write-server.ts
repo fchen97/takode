@@ -40,6 +40,9 @@ const app = new Hono();
 app.route("/api", createQuestRoutes(ctx));
 app.route("/api", createMemoryRoutes(ctx));
 app.route("/api", createStreamRoutes(ctx));
+// `quest create` asks whether the caller files quests under topics. Topics need a
+// topic service this server does not run; no stub session is a leader with topics.
+app.get("/api/topics/caller-status", (c) => c.json({ enabled: false, space: null, topics: [] }));
 
 const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: app.fetch });
 // Like the real server, settings (server slug and id) belong to the listening port.
