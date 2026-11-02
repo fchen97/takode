@@ -56,7 +56,7 @@ import type { QuestHistoryView, QuestmasterTask } from "../server/quest-types.js
 import { hasQuestReviewMetadata, isQuestReviewInboxUnread } from "../server/quest-types.js";
 import { applyQuestListFilters } from "../server/quest-list-filters.js";
 import { getName } from "../server/session-names.js";
-import { formatQuestLine, formatSessionLabel } from "./quest-format.js";
+import { formatQuestLine, formatSessionLabel, STATUS_LABELS, timeAgo } from "./quest-format.js";
 import { parseCommitShas } from "./quest-commit-flags.js";
 import {
   normalizeTldr,
@@ -294,24 +294,6 @@ function warnAll(messages: string[]): void {
 function tldrWarningsForWrite(kind: "description" | "feedback" | "debrief", text: unknown, tldr: unknown): string[] {
   return tldrWarningsForContent(kind, text, tldr);
 }
-
-function timeAgo(ts: number): string {
-  const seconds = Math.floor((Date.now() - ts) / 1000);
-  if (seconds < 60) return `${seconds}s ago`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-}
-
-const STATUS_LABELS: Record<string, string> = {
-  idea: "idea",
-  refined: "refined",
-  in_progress: "in_progress",
-  done: "done",
-};
 
 const VERIFICATION_FILTER_VALUES = new Set([
   "all",
