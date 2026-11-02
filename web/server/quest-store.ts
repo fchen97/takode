@@ -660,6 +660,16 @@ function removeLiveQuest(store: LiveQuestStore, questId: string): LiveQuestStore
 
 // ─── Public API ──────────────────────────────────────────────────────────────
 
+/**
+ * Whether this machine holds a quest store, current or not yet migrated, checked
+ * without creating anything. A CLI with no server to ask reads the local store
+ * only when there is one, so a machine without one never gains an empty store.
+ */
+export async function hasLocalQuestStore(): Promise<boolean> {
+  if (await stat(join(QUESTS_DIR, "_meta.json")).catch(() => null)) return true;
+  return hasUnmigratedData();
+}
+
 /** List the latest version of every quest. */
 export async function listQuests(): Promise<QuestmasterTask[]> {
   return liveQuestsWithRelationships(await currentStore());

@@ -164,6 +164,13 @@ describe("Quest CLI Codex sidecar execution", () => {
       );
     }
 
+    // This machine's (empty) store answers the read; without one the CLI would refuse.
+    await mkdir(join(root, ".companion", "questmaster-live"), { recursive: true });
+    await writeFile(
+      join(root, ".companion", "questmaster-live", "store.json"),
+      JSON.stringify({ format: "mutable_current_record", version: 1, nextQuestNumber: 1, quests: [] }),
+    );
+
     const result = await runQuest(["list"], {
       HOME: root,
       TAKODE_CODEX_SESSION_ID: "codex-task",

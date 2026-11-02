@@ -387,3 +387,33 @@ describe("quest store at startup", () => {
     expect(await questStore.getQuestVersion("q-1-v2")).toMatchObject({ id: "q-1-v2", title: "Legacy v2" });
   });
 });
+
+// A quest CLI with no server to ask reads this machine's store only when there
+// is one. Importing the store and checking for it must create nothing, or a
+// machine without a store (a remote host) would gain an empty one.
+describe("hasLocalQuestStore", () => {
+  it("is false on a machine without a store, and creates nothing", async () => {
+    expect(await questStore.hasLocalQuestStore()).toBe(false);
+    expect(readdirSync(tempDir)).toEqual([]);
+  });
+
+  it("finds the per-quest store, a single-file store not yet moved, or legacy version files", async () => {
+    // A store the server has already moved into one file per quest.
+    writeQuestStoreFixture(companionDir(), { quests: [] });
+    expect(await questStore.hasLocalQuestStore()).toBe(true);
+    rmSync(liveStoreDir(), { recursive: true, force: true });
+    expect(await questStore.hasLocalQuestStore()).toBe(false);
+
+    // Single-file stores, in their current and first location.
+    writeSingleFileStore(singleFileStorePath(), singleFileStore([]));
+    expect(await questStore.hasLocalQuestStore()).toBe(true);
+    rmSync(liveStoreDir(), { recursive: true, force: true });
+    writeSingleFileStore(coLocatedStorePath(), singleFileStore([]));
+    expect(await questStore.hasLocalQuestStore()).toBe(true);
+    rmSync(coLocatedStorePath());
+
+    // Pre-July per-version files.
+    writeLegacyVersion(questDir(), { id: "q-3-v1", questId: "q-3", version: 1, title: "Legacy", status: "idea" });
+    expect(await questStore.hasLocalQuestStore()).toBe(true);
+  });
+});

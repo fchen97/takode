@@ -14,6 +14,8 @@ import {
   importCoordinatorHandoff,
   REHEARSAL_DISABLED_BINARY,
 } from "./coordinator-handoff.js";
+import { loadCarriedOverTokenUsage } from "./workspace-token-usage-carryover.js";
+import { buildWorkspaceTokenUsageByModel } from "./workspace-token-usage.js";
 
 // Fixture: a laptop coordinator ("laptop") with one laptop session running
 // under its own node, one session on the DevBox host, one archived session,
@@ -385,5 +387,78 @@ describe("coordinator handoff", () => {
     expect(names).not.toContain("settings-secrets-3471.json");
     expect(names).not.toContain("web-push");
     expect(await readdir(join(devboxHome, ".companion", "sessions"))).toEqual(["3471"]);
+  });
+
+  // Archived sessions stay on the old machine but hold most of the all-time
+  // token usage, so their token fields move in a carry-over file, merged with
+  // what earlier moves carried, and the new coordinator counts them.
+  it("carries archived sessions' token usage to the new coordinator", async () => {
+    const day = 24 * 60 * 60 * 1000;
+    const now = 1_800_000_000_000;
+    await put(laptopHome, `sessions/3456/${ARCHIVED_SESSION}.json`, {
+      id: ARCHIVED_SESSION,
+      archived: true,
+      state: {
+        backend_type: "codex",
+        model: "gpt-5.5",
+        cwd: "/laptop/old",
+        codex_token_details: {
+          totalTokens: 900,
+          inputTokens: 800,
+          outputTokens: 100,
+          cachedInputTokens: 0,
+          reasoningOutputTokens: 0,
+          modelContextWindow: 200_000,
+        },
+        token_usage_samples: [
+          { timestamp: now - 90 * day, backend: "codex", model: "gpt-5.5", totalTokens: 100 },
+          { timestamp: now - 60 * day, backend: "codex", model: "gpt-5.5", totalTokens: 500 },
+          { timestamp: now - 2 * day, backend: "codex", model: "gpt-5.5", totalTokens: 900 },
+        ],
+      },
+    });
+    // Carried over by an earlier move: its session is not in this launcher.
+    await put(laptopHome, "sessions/3456/token-usage/carried-over.json", {
+      version: 1,
+      sessions: [
+        {
+          sessionId: "earlier-move",
+          state: {
+            backend_type: "claude-sdk",
+            model: "claude-opus",
+            claude_model_usage: { "claude-opus": { inputTokens: 50, outputTokens: 0, cachedInputTokens: 0 } },
+          },
+        },
+      ],
+    });
+
+    await exportReal();
+    await importCoordinatorHandoff({ home: devboxHome, packageDir });
+
+    const carried = await readJsonAt(devboxHome, "sessions/3456/token-usage/carried-over.json");
+    expect(carried.sessions.map((entry: { sessionId: string }) => entry.sessionId)).toEqual([
+      "earlier-move",
+      ARCHIVED_SESSION,
+    ]);
+    const archived = carried.sessions[1];
+    expect(archived.sessionNum).toBe(12);
+    // Only token fields travel, and only samples that can still reach a daily
+    // bucket plus the baseline right before them.
+    expect(Object.keys(archived.state).sort()).toEqual([
+      "backend_type",
+      "codex_token_details",
+      "model",
+      "token_usage_samples",
+    ]);
+    expect(archived.state.token_usage_samples.map((sample: { totalTokens: number }) => sample.totalTokens)).toEqual([
+      500, 900,
+    ]);
+
+    const summary = buildWorkspaceTokenUsageByModel(
+      await loadCarriedOverTokenUsage(join(devboxHome, ".companion", "sessions", "3456")),
+      now,
+    );
+    expect(summary.totalTokens).toBe(950);
+    expect(summary.history.ranges.find((range) => range.id === "month")?.totalTokens).toBe(400);
   });
 });

@@ -31,6 +31,7 @@ import {
   type TokenUsage,
 } from "./context-usage.js";
 import { computeSessionTurnMetrics } from "../user-message-classification.js";
+import { recordClaudeResultTokenUsage } from "../workspace-token-usage.js";
 import { isResultStopReasonInterrupted, isTerminalResultInterrupted } from "../result-interruption.js";
 import { markRecentAskVisibleResponseFromStream } from "../recent-ask-bundles.js";
 import {
@@ -245,6 +246,8 @@ export interface ResultMessageSessionLike {
     | "num_turns"
     | "context_used_percent"
     | "claude_token_details"
+    | "claude_model_usage"
+    | "token_usage_samples"
     | "leaderThreadStatuses"
     | "slackThreadChild"
   >;
@@ -1007,6 +1010,7 @@ export function handleResultMessage(
   }
 
   const resultTimestamp = Date.now();
+  recordClaudeResultTokenUsage(session.state, msg.modelUsage, resultTimestamp);
   const provisionalResultBrowserMsg: BrowserIncomingMessage = {
     type: "result",
     data: msg,
