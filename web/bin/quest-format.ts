@@ -51,14 +51,14 @@ const STATUS_ICONS: Record<string, string> = {
   done: "✓",
 };
 
-const STATUS_LABELS: Record<string, string> = {
+export const STATUS_LABELS: Record<string, string> = {
   idea: "idea",
   refined: "refined",
   in_progress: "in_progress",
   done: "done",
 };
 
-function timeAgo(ts: number): string {
+export function timeAgo(ts: number): string {
   const seconds = Math.floor((Date.now() - ts) / 1000);
   if (seconds < 60) return `${seconds}s ago`;
   const minutes = Math.floor(seconds / 60);

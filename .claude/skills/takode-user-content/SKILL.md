@@ -55,12 +55,12 @@ The user-facing doc is `docs/user-instructions-and-skills.md` in the Takode repo
    - Copies of skills from another repository can carry stale references to their old home; point them out.
 3. **Fill the store.**
    - **Import:** `takode user-content import --machine <name>`.
-   - **Repository:** on the coordinator, clone it once (for example `~/Code/<repo>`) with the layout below, then link the store folders into it:
+   - **Repository:** on the coordinator, clone it once (for example `~/Code/<repo>`) with the layout below, then link the store folders into it with links relative to `~/.companion`, so they still resolve if the coordinator later moves to a machine with another home path:
      ```
      <repo>/user-instructions/all.md
      <repo>/user-skills/all/<skill>/
-     ln -s <repo>/user-instructions ~/.companion/user-instructions
-     ln -s <repo>/user-skills ~/.companion/user-skills
+     ln -s ../Code/<repo>/user-instructions ~/.companion/user-instructions
+     ln -s ../Code/<repo>/user-skills ~/.companion/user-skills
      ```
      Create the links last: as soon as a store folder exists, Takode starts delivering.
 4. **Wait about 30 seconds**, then run `takode user-content status` again. Every connected machine now has the store's copy, except what waits.
@@ -95,5 +95,5 @@ The user-facing doc is `docs/user-instructions-and-skills.md` in the Takode repo
 ## Moving the coordinator or adding a host
 
 - **Before you propose either**, check this system with the user. Follow "Your instructions and skills" in `docs/moving-the-coordinator.md`.
-- **Moving:** a coordinator move carries the store. A store folder that is a link moves as the same link, so clone its repository on the new machine at the same path first.
+- **Moving:** a coordinator move carries the store. A store folder that is a link moves exactly as written, so clone its repository on the new machine before the import: at the same place under the home directory for a relative link, at the same absolute path for an absolute one. When that path cannot exist there (for example `/Users/...` on Linux), make the links relative before the export or re-point them after the import.
 - **A new host** receives the store when it connects. Its own differing files wait for approval.

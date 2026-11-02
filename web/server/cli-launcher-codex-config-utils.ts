@@ -88,59 +88,171 @@ export function removeTopLevelTomlSettings(configToml: string, keys: Set<string>
   return out.join("\n") + (endsWithNewline ? "\n" : "");
 }
 
-export function upsertShellEnvironmentIncludeOnly(configToml: string, requiredVars: string[]): string {
-  if (requiredVars.length === 0) return configToml;
-  const shellEnvPolicyHeader = "[shell_environment_policy]";
+const SHELL_ENV_POLICY_HEADER = "[shell_environment_policy]";
+const SHELL_ENV_POLICY_SET_HEADER = "[shell_environment_policy.set]";
+
+/**
+ * The variables Codex passes to commands with `inherit = "core"` on Unix. Codex
+ * versions differ slightly (older ones also pass USERNAME; newer ones the
+ * locale variables), so this is the union.
+ */
+const CODEX_CORE_ENV_VARS = [
+  "HOME",
+  "LANG",
+  "LC_ALL",
+  "LC_CTYPE",
+  "LOGNAME",
+  "PATH",
+  "SHELL",
+  "TEMP",
+  "TMP",
+  "TMPDIR",
+  "USER",
+  "USERNAME",
+];
+
+/** Left in a session copy whose `inherit = "core"` or `"none"` Takode widened, so later launches know. */
+const WIDENED_INHERIT_MARKER = /^\s*#\s*Takode: inherit was "(core|none)"/;
+
+/**
+ * Make Codex pass `requiredVars` to the commands it runs, and `inheritedVars`
+ * too when the user's policy lets the environment through, keeping the rest of
+ * the user's `[shell_environment_policy]`.
+ *
+ * Codex builds a command's environment in order: `inherit` picks the starting
+ * variables, excludes drop some, `set` adds its own, then a non-empty
+ * `include_only` keeps only matching names. So `include_only` cannot bring back
+ * what `inherit = "core"` or `"none"` already dropped. For those, the session
+ * copy inherits everything and `include_only` lists exactly what the user's
+ * policy passed (the core variables, or none, plus `set`) together with
+ * `requiredVars`; other variables, such as tokens, still stay out.
+ */
+export function upsertShellEnvironmentPolicy(
+  configToml: string,
+  requiredVars: string[],
+  inheritedVars: string[] = [],
+): string {
   const normalizedRequired = Array.from(new Set(requiredVars)).sort();
+  const normalizedAll = Array.from(new Set([...requiredVars, ...inheritedVars])).sort();
+  if (normalizedAll.length === 0) return configToml;
   const endsWithNewline = configToml.endsWith("\n");
   const lines = configToml.split("\n");
   if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
 
-  const sectionStart = lines.findIndex((line) => line.trim().toLowerCase() === shellEnvPolicyHeader.toLowerCase());
+  const sectionStart = findSectionStart(lines, SHELL_ENV_POLICY_HEADER);
   if (sectionStart === -1) {
     const out = [...lines];
     if (out.length > 0 && out[out.length - 1].trim() !== "") out.push("");
-    out.push(shellEnvPolicyHeader);
-    out.push(...renderIncludeOnlyArray(normalizedRequired));
+    out.push(SHELL_ENV_POLICY_HEADER);
+    out.push(...renderIncludeOnlyArray(normalizedAll));
     return out.join("\n") + (endsWithNewline || configToml.length === 0 ? "\n" : "");
   }
-
-  let sectionEnd = lines.length;
-  for (let i = sectionStart + 1; i < lines.length; i++) {
-    if (/^\s*\[[^\]]+\]\s*$/.test(lines[i])) {
-      sectionEnd = i;
-      break;
-    }
-  }
+  const sectionEnd = findSectionEnd(lines, sectionStart);
 
   let includeStart = -1;
+  let inheritLine = -1;
+  let ignoreDefaultExcludesLine = -1;
+  let widenedFrom: string | undefined;
   for (let i = sectionStart + 1; i < sectionEnd; i++) {
-    if (/^\s*include_only\s*=\s*\[/.test(lines[i])) {
-      includeStart = i;
-      break;
+    const line = lines[i];
+    if (includeStart === -1 && /^\s*include_only\s*=\s*\[/.test(line)) includeStart = i;
+    if (inheritLine === -1 && /^\s*inherit\s*=/.test(line)) inheritLine = i;
+    if (ignoreDefaultExcludesLine === -1 && /^\s*ignore_default_excludes\s*=/.test(line)) {
+      ignoreDefaultExcludesLine = i;
+    }
+    widenedFrom ??= line.match(WIDENED_INHERIT_MARKER)?.[1];
+  }
+  let includeEnd = includeStart;
+  if (includeStart !== -1) {
+    while (includeEnd < sectionEnd && !lines[includeEnd].includes("]")) includeEnd++;
+    if (includeEnd >= sectionEnd) includeEnd = includeStart;
+  }
+  const existingVars =
+    includeStart === -1 ? [] : extractQuotedStrings(lines.slice(includeStart, includeEnd + 1).join("\n"));
+  const inherit =
+    inheritLine === -1 ? undefined : lines[inheritLine].match(/=\s*["']([A-Za-z]+)["']/)?.[1]?.toLowerCase();
+
+  const edits: Array<{ start: number; remove: number; insert: string[] }> = [];
+  let includeVars: string[];
+  if (widenedFrom) {
+    // An earlier launch already widened this copy; its list holds what the user's policy passed.
+    includeVars = mergeUniqueStrings(existingVars, normalizedRequired);
+  } else if (inherit === "core" || inherit === "none") {
+    const passed = [...(inherit === "core" ? CODEX_CORE_ENV_VARS : []), ...readShellEnvironmentSetKeys(lines)];
+    const kept =
+      existingVars.length === 0
+        ? passed
+        : passed.filter((name) => existingVars.some((pattern) => matchesEnvPattern(name, pattern)));
+    includeVars = mergeUniqueStrings(Array.from(new Set(kept)).sort(), normalizedRequired);
+    // Codex's default excludes drop names with KEY, SECRET or TOKEN before `set`
+    // and `include_only` apply. Of the listed names only Takode's own token
+    // matches, so turning them off lets just that through.
+    edits.push({
+      start: inheritLine,
+      remove: 1,
+      insert: [
+        `# Takode: inherit was "${inherit}"; commands get only the variables in include_only.`,
+        'inherit = "all"',
+        ...(ignoreDefaultExcludesLine === -1 ? ["ignore_default_excludes = true"] : []),
+      ],
+    });
+    if (ignoreDefaultExcludesLine !== -1) {
+      edits.push({ start: ignoreDefaultExcludesLine, remove: 1, insert: ["ignore_default_excludes = true"] });
+    }
+  } else {
+    includeVars = mergeUniqueStrings(existingVars, normalizedAll);
+  }
+  const replacement = renderIncludeOnlyArray(includeVars);
+  edits.push(
+    includeStart === -1
+      ? { start: sectionStart + 1, remove: 0, insert: replacement }
+      : { start: includeStart, remove: includeEnd - includeStart + 1, insert: replacement },
+  );
+
+  // Apply from the bottom up so earlier line numbers stay valid.
+  const out = [...lines];
+  edits.sort((a, b) => b.start - a.start || b.remove - a.remove);
+  for (const edit of edits) out.splice(edit.start, edit.remove, ...edit.insert);
+  return out.join("\n") + (endsWithNewline ? "\n" : "");
+}
+
+function findSectionStart(lines: string[], header: string): number {
+  return lines.findIndex((line) => line.trim().toLowerCase() === header.toLowerCase());
+}
+
+function findSectionEnd(lines: string[], sectionStart: number): number {
+  for (let i = sectionStart + 1; i < lines.length; i++) {
+    if (/^\s*\[[^\]]+\]\s*$/.test(lines[i])) return i;
+  }
+  return lines.length;
+}
+
+/** Names the policy's `set` table adds, from `[shell_environment_policy.set]` or an inline `set = { ... }`. */
+function readShellEnvironmentSetKeys(lines: string[]): string[] {
+  const keys: string[] = [];
+  const keyPattern = /["']?([A-Za-z_][A-Za-z0-9_]*)["']?\s*=/g;
+  const setStart = findSectionStart(lines, SHELL_ENV_POLICY_SET_HEADER);
+  if (setStart !== -1) {
+    for (const line of lines.slice(setStart + 1, findSectionEnd(lines, setStart))) {
+      const key = line.match(/^\s*["']?([A-Za-z_][A-Za-z0-9_]*)["']?\s*=/)?.[1];
+      if (key) keys.push(key);
     }
   }
-
-  if (includeStart === -1) {
-    const out = [...lines];
-    out.splice(sectionStart + 1, 0, ...renderIncludeOnlyArray(normalizedRequired));
-    return out.join("\n") + (endsWithNewline ? "\n" : "");
+  const sectionStart = findSectionStart(lines, SHELL_ENV_POLICY_HEADER);
+  for (const line of lines.slice(sectionStart + 1, findSectionEnd(lines, sectionStart))) {
+    const inline = line.match(/^\s*set\s*=\s*\{(.*)\}/)?.[1];
+    if (inline) for (const match of inline.matchAll(keyPattern)) keys.push(match[1]);
   }
+  return keys;
+}
 
-  let includeEnd = includeStart;
-  while (includeEnd < sectionEnd) {
-    if (lines[includeEnd].includes("]")) break;
-    includeEnd++;
-  }
-  if (includeEnd >= sectionEnd) includeEnd = includeStart;
-
-  const includeBlock = lines.slice(includeStart, includeEnd + 1).join("\n");
-  const existingVars = extractQuotedStrings(includeBlock);
-  const mergedVars = mergeUniqueStrings(existingVars, normalizedRequired);
-  const replacement = renderIncludeOnlyArray(mergedVars);
-  const out = [...lines];
-  out.splice(includeStart, includeEnd - includeStart + 1, ...replacement);
-  return out.join("\n") + (endsWithNewline ? "\n" : "");
+/** Codex's `include_only` patterns: case-insensitive globs with `*` and `?`. */
+function matchesEnvPattern(name: string, pattern: string): boolean {
+  const source = pattern
+    .split("")
+    .map((char) => (char === "*" ? ".*" : char === "?" ? "." : escapeRegExp(char)))
+    .join("");
+  return new RegExp(`^${source}$`, "i").test(name);
 }
 
 export function escapeRegExp(input: string): string {
