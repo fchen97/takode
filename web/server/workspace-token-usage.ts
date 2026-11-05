@@ -1,12 +1,20 @@
-import type {
-  BrowserIncomingMessage,
-  ClaudeModelTokenUsage,
-  CLIResultMessage,
-  SessionState,
-  SessionTokenUsageSample,
-} from "./session-types.js";
+import type { BrowserIncomingMessage } from "./session-types.js";
+import {
+  dayTotal,
+  firstLocalDay,
+  formatLocalDay,
+  positiveNumber,
+  tokenUsageDaysFor,
+  tokenUsageLedgerFor,
+  type TokenUsageLedgerState,
+} from "./workspace-token-usage-ledger.js";
+import type { TokenUsageBackfillSession } from "./workspace-token-usage-types.js";
 
-const MAX_TOKEN_USAGE_SAMPLES = 1_500;
+export {
+  ensureTokenUsageLedger,
+  recordClaudeResultTokenUsage,
+  recordCodexTokenUsage,
+} from "./workspace-token-usage-ledger.js";
 
 export interface WorkspaceTokenUsageByModelRow {
   model: string;
@@ -55,75 +63,27 @@ export interface WorkspaceTokenUsageByModelSummary {
 }
 
 export interface WorkspaceTokenUsageSessionSource {
-  state?: Pick<
-    SessionState,
-    | "backend_type"
-    | "model"
-    | "codex_token_details"
-    | "claude_token_details"
-    | "claude_model_usage"
-    | "token_usage_samples"
-  >;
+  state?: TokenUsageLedgerState;
+  /** Loaded history; read only to convert sessions recorded before the per-session ledger. */
   messageHistory?: BrowserIncomingMessage[];
 }
 
 export interface WorkspaceTokenUsageSession {
   sessionId: string;
   source?: WorkspaceTokenUsageSessionSource | null;
+  /** This session's days rebuilt from backend logs, when a backfill holds any. */
+  backfill?: TokenUsageBackfillSession | null;
 }
 
 type TokenBucket = Omit<WorkspaceTokenUsageByModelRow, "model"> & { sessionIds: Set<string> };
-type CumulativeSample = SessionTokenUsageSample & { sessionId: string; model: string; observedTotalTokens: number };
 
 const HISTOGRAM_RANGES: Array<{ id: WorkspaceTokenUsageRangeId; label: string; days: number }> = [
   { id: "week", label: "Past week", days: 7 },
   { id: "month", label: "Past month", days: 30 },
 ];
 
-function positiveNumber(value: unknown): number {
-  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
-}
-
-function totalFromParts(parts: {
-  inputTokens?: number;
-  outputTokens?: number;
-  cachedInputTokens?: number;
-  reasoningOutputTokens?: number;
-}): number {
-  return (
-    positiveNumber(parts.inputTokens) +
-    positiveNumber(parts.outputTokens) +
-    positiveNumber(parts.cachedInputTokens) +
-    positiveNumber(parts.reasoningOutputTokens)
-  );
-}
-
-function cumulativeSampleTotal(sample: {
-  totalTokens?: number;
-  inputTokens?: number;
-  outputTokens?: number;
-  cachedInputTokens?: number;
-  reasoningOutputTokens?: number;
-}): number {
-  return (
-    positiveNumber(sample.totalTokens) ||
-    totalFromParts({
-      inputTokens: sample.inputTokens,
-      outputTokens: sample.outputTokens,
-      cachedInputTokens: sample.cachedInputTokens,
-      reasoningOutputTokens: sample.reasoningOutputTokens,
-    })
-  );
-}
-
-function normalizeModelLabel(model: unknown): string | null {
-  if (typeof model !== "string") return null;
-  const trimmed = model.trim();
-  if (!trimmed) return null;
-  const normalized = trimmed.toLowerCase();
-  if (normalized === "unknown" || normalized === "default") return null;
-  return trimmed;
-}
+const EARLIER_USAGE_REASON =
+  "Usage from before a session's daily tracking began, or older than its kept days, counts in all-time totals but not in daily buckets.";
 
 function getBucket(buckets: Map<string, TokenBucket>, model: string): TokenBucket {
   const existing = buckets.get(model);
@@ -154,24 +114,14 @@ function addUsageToBucket(
   },
   options: { codexModelAttributionLimited?: boolean } = {},
 ): void {
-  const inputTokens = positiveNumber(usage.inputTokens);
-  const outputTokens = positiveNumber(usage.outputTokens);
-  const cachedInputTokens = positiveNumber(usage.cachedInputTokens);
-  const reasoningOutputTokens = positiveNumber(usage.reasoningOutputTokens);
-  // Some providers report detail fields that overlap with the raw cumulative
-  // total. Prefer an explicit total when present, and keep detail fields as a
-  // breakdown rather than deriving the row total from them.
-  const totalTokens =
-    positiveNumber(usage.totalTokens) ||
-    totalFromParts({ inputTokens, outputTokens, cachedInputTokens, reasoningOutputTokens });
+  const totalTokens = positiveNumber(usage.totalTokens);
   if (totalTokens <= 0) return;
-
   const bucket = getBucket(buckets, model);
   bucket.totalTokens += totalTokens;
-  bucket.inputTokens += inputTokens;
-  bucket.outputTokens += outputTokens;
-  bucket.cachedInputTokens += cachedInputTokens;
-  bucket.reasoningOutputTokens += reasoningOutputTokens;
+  bucket.inputTokens += positiveNumber(usage.inputTokens);
+  bucket.outputTokens += positiveNumber(usage.outputTokens);
+  bucket.cachedInputTokens += positiveNumber(usage.cachedInputTokens);
+  bucket.reasoningOutputTokens += positiveNumber(usage.reasoningOutputTokens);
   bucket.sessionIds.add(sessionId);
   bucket.sessionCount = bucket.sessionIds.size;
   if (options.codexModelAttributionLimited) bucket.codexModelAttributionLimited = true;
@@ -193,32 +143,8 @@ function buildModelRows(buckets: Map<string, TokenBucket>): WorkspaceTokenUsageB
     .sort((a, b) => b.totalTokens - a.totalTokens || a.model.localeCompare(b.model));
 }
 
-function isResultMessage(
-  message: BrowserIncomingMessage,
-): message is Extract<BrowserIncomingMessage, { type: "result" }> {
-  return message.type === "result";
-}
-
-function validTimestamp(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
-}
-
-function formatLocalDay(timestamp: number): string {
-  const date = new Date(timestamp);
-  const year = date.getFullYear();
-  const month = `${date.getMonth() + 1}`.padStart(2, "0");
-  const day = `${date.getDate()}`.padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
-function startOfLocalDay(timestamp: number): number {
-  const date = new Date(timestamp);
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
-}
-
 function buildDayKeys(days: number, now: number): string[] {
-  const cursor = new Date(startOfLocalDay(now));
-  cursor.setDate(cursor.getDate() - (days - 1));
+  const cursor = new Date(`${firstLocalDay(days, now)}T00:00:00`);
   return Array.from({ length: days }, () => {
     const day = formatLocalDay(cursor.getTime());
     cursor.setDate(cursor.getDate() + 1);
@@ -226,156 +152,17 @@ function buildDayKeys(days: number, now: number): string[] {
   });
 }
 
-function toCumulativeSample(sessionId: string, sample: SessionTokenUsageSample): CumulativeSample | null {
-  const timestamp = validTimestamp(sample.timestamp);
-  const model = normalizeModelLabel(sample.model);
-  if (!timestamp || !model) return null;
-  const observedTotalTokens = cumulativeSampleTotal(sample);
-  if (observedTotalTokens <= 0) return null;
-  return { ...sample, sessionId, timestamp, model, observedTotalTokens };
-}
-
-interface CollectedClaudeUsage {
-  usageByModel: Map<string, ClaudeModelTokenUsage>;
-  samples: CumulativeSample[];
-}
-
-function claudeModelUsageEntries(
-  modelUsage: CLIResultMessage["modelUsage"] | undefined,
-): Array<[string, ClaudeModelTokenUsage]> {
-  const entries: Array<[string, ClaudeModelTokenUsage]> = [];
-  for (const [rawModel, usage] of Object.entries(modelUsage ?? {})) {
-    const model = normalizeModelLabel(rawModel);
-    if (!model || !usage) continue;
-    const nextUsage = {
-      inputTokens: positiveNumber(usage.inputTokens),
-      outputTokens: positiveNumber(usage.outputTokens),
-      cachedInputTokens: positiveNumber(usage.cacheReadInputTokens) + positiveNumber(usage.cacheCreationInputTokens),
-    };
-    if (totalFromParts(nextUsage) > 0) entries.push([model, nextUsage]);
-  }
-  return entries;
-}
-
-function collectClaudeUsageFromHistory(
-  sessionId: string,
-  messageHistory: BrowserIncomingMessage[] | undefined,
-  limitedReasons: Set<string>,
-): CollectedClaudeUsage {
-  const usageByModel = new Map<string, ClaudeModelTokenUsage>();
-  const samples: CumulativeSample[] = [];
-  if (!messageHistory) return { usageByModel, samples };
-
-  for (const message of messageHistory) {
-    if (!isResultMessage(message)) continue;
-    const modelUsage = (message.data as CLIResultMessage | undefined)?.modelUsage;
-    if (!modelUsage) continue;
-    const timestamp = validTimestamp(message.timestamp);
-
-    for (const [model, nextUsage] of claudeModelUsageEntries(modelUsage)) {
-      usageByModel.set(model, nextUsage);
-
-      if (!timestamp) {
-        limitedReasons.add("Some cumulative result totals have no timestamp, so they are excluded from daily buckets.");
-        continue;
-      }
-      const sample = toCumulativeSample(sessionId, {
-        timestamp,
-        backend: "claude-sdk",
-        model,
-        ...nextUsage,
-      });
-      if (sample) samples.push(sample);
-    }
-  }
-
-  return { usageByModel, samples };
-}
-
-/**
- * Claude usage a session keeps in state. Message history is not loaded for
- * archived sessions, so totals fall back to the per-model map recorded on each
- * result, and for sessions from before that map to the summed
- * `claude_token_details`, attributed to the session's model.
- */
-function addPersistedClaudeUsage(
-  usageByModel: Map<string, ClaudeModelTokenUsage>,
-  state: WorkspaceTokenUsageSessionSource["state"],
-): void {
-  if (!state || state.backend_type === "codex") return;
-  // The state map is updated with every result, so it is at least as recent as history.
-  for (const [rawModel, usage] of Object.entries(state.claude_model_usage ?? {})) {
-    const model = normalizeModelLabel(rawModel);
-    const persisted = usage ? claudeUsageFromState(usage) : null;
-    if (model && persisted) usageByModel.set(model, persisted);
-  }
-  if (usageByModel.size > 0) return;
-  const model = normalizeModelLabel(state.model);
-  const details = state.claude_token_details ? claudeUsageFromState(state.claude_token_details) : null;
-  if (model && details) usageByModel.set(model, details);
-}
-
-function claudeUsageFromState(usage: ClaudeModelTokenUsage): ClaudeModelTokenUsage | null {
-  const parts = {
-    inputTokens: positiveNumber(usage.inputTokens),
-    outputTokens: positiveNumber(usage.outputTokens),
-    cachedInputTokens: positiveNumber(usage.cachedInputTokens),
-  };
-  return totalFromParts(parts) > 0 ? parts : null;
-}
-
-function buildHistogramRanges(
-  samples: CumulativeSample[],
+function buildRanges(
+  dayModelTotals: Map<string, Map<string, number>>,
   now: number,
-  limitedReasons: Set<string>,
 ): WorkspaceTokenUsageHistogramRange[] {
-  const maxDays = Math.max(...HISTOGRAM_RANGES.map((range) => range.days));
-  const dayKeys = buildDayKeys(maxDays, now);
-  const daySet = new Set(dayKeys);
-  const dayModelTotals = new Map<string, Map<string, number>>();
-  for (const day of dayKeys) dayModelTotals.set(day, new Map());
-
-  const bySessionModel = new Map<string, CumulativeSample[]>();
-  for (const sample of samples) {
-    const key = `${sample.sessionId}\u0000${sample.model}`;
-    const group = bySessionModel.get(key) ?? [];
-    group.push(sample);
-    bySessionModel.set(key, group);
-  }
-
-  for (const group of bySessionModel.values()) {
-    group.sort((a, b) => a.timestamp - b.timestamp);
-    let previous: CumulativeSample | null = null;
-    for (const sample of group) {
-      if (!previous) {
-        previous = sample;
-        limitedReasons.add("Daily buckets start after the first timestamped cumulative sample for each session/model.");
-        continue;
-      }
-      const delta = sample.observedTotalTokens - previous.observedTotalTokens;
-      previous = sample;
-      if (delta <= 0) continue;
-      const day = formatLocalDay(sample.timestamp);
-      if (!daySet.has(day)) continue;
-      const modelTotals = dayModelTotals.get(day);
-      if (!modelTotals) continue;
-      modelTotals.set(sample.model, (modelTotals.get(sample.model) ?? 0) + delta);
-    }
-  }
-
   return HISTOGRAM_RANGES.map((range) => {
-    const rangeDayKeys = dayKeys.slice(-range.days);
-    const buckets = rangeDayKeys.map((date) => {
-      const modelTotals = dayModelTotals.get(date) ?? new Map<string, number>();
-      const models = [...modelTotals.entries()]
+    const buckets = buildDayKeys(range.days, now).map((date) => {
+      const models = [...(dayModelTotals.get(date) ?? new Map<string, number>()).entries()]
         .map(([model, totalTokens]) => ({ model, totalTokens }))
         .filter((entry) => entry.totalTokens > 0)
         .sort((a, b) => b.totalTokens - a.totalTokens || a.model.localeCompare(b.model));
-      return {
-        date,
-        totalTokens: models.reduce((total, entry) => total + entry.totalTokens, 0),
-        models,
-      };
+      return { date, totalTokens: models.reduce((total, entry) => total + entry.totalTokens, 0), models };
     });
     return {
       id: range.id,
@@ -388,76 +175,16 @@ function buildHistogramRanges(
   });
 }
 
-function buildHistorySummary(
-  samples: CumulativeSample[],
-  now: number,
-  allTimeTotalTokens: number,
-  limitedReasons: Set<string>,
-): WorkspaceTokenUsageHistorySummary {
-  if (allTimeTotalTokens > 0 && samples.length === 0) {
-    limitedReasons.add("No timestamped token usage samples are available yet for daily buckets.");
-  }
-  return {
-    ranges: buildHistogramRanges(samples, now, limitedReasons),
-    limited: limitedReasons.size > 0,
-    limitedReasons: [...limitedReasons],
-  };
-}
-
-export function appendTokenUsageSample(
-  state: Pick<SessionState, "token_usage_samples">,
-  sample: SessionTokenUsageSample | null | undefined,
-  maxSamples = MAX_TOKEN_USAGE_SAMPLES,
-): void {
-  if (!sample) return;
-  const normalized = toCumulativeSample("session", sample);
-  if (!normalized) return;
-  const nextSample: SessionTokenUsageSample = {
-    timestamp: normalized.timestamp,
-    backend: normalized.backend,
-    model: normalized.model,
-    ...(positiveNumber(normalized.totalTokens) ? { totalTokens: positiveNumber(normalized.totalTokens) } : {}),
-    ...(positiveNumber(normalized.inputTokens) ? { inputTokens: positiveNumber(normalized.inputTokens) } : {}),
-    ...(positiveNumber(normalized.outputTokens) ? { outputTokens: positiveNumber(normalized.outputTokens) } : {}),
-    ...(positiveNumber(normalized.cachedInputTokens)
-      ? { cachedInputTokens: positiveNumber(normalized.cachedInputTokens) }
-      : {}),
-    ...(positiveNumber(normalized.reasoningOutputTokens)
-      ? { reasoningOutputTokens: positiveNumber(normalized.reasoningOutputTokens) }
-      : {}),
-    ...(normalized.codexModelAttributionLimited ? { codexModelAttributionLimited: true } : {}),
-  };
-  const existing = state.token_usage_samples ?? [];
-  const last = existing[existing.length - 1];
-  if (
-    last &&
-    last.backend === nextSample.backend &&
-    last.model === nextSample.model &&
-    cumulativeSampleTotal(last) === cumulativeSampleTotal(nextSample)
-  ) {
-    return;
-  }
-  state.token_usage_samples = [...existing, nextSample].slice(-maxSamples);
-}
-
-/**
- * Keep a Claude result's cumulative per-model usage in session state, beside
- * the result in message history, so archived sessions (whose history is not
- * loaded) and sessions carried over from another coordinator still count.
- * Samples share the result's timestamp, so the copy derived from history adds
- * nothing to daily buckets.
- */
-export function recordClaudeResultTokenUsage(
-  state: Pick<SessionState, "claude_model_usage" | "token_usage_samples">,
-  modelUsage: CLIResultMessage["modelUsage"] | undefined,
-  timestamp: number,
-): void {
-  const entries = claudeModelUsageEntries(modelUsage);
-  if (entries.length === 0) return;
-  state.claude_model_usage = { ...state.claude_model_usage, ...Object.fromEntries(entries) };
-  for (const [model, usage] of entries) {
-    appendTokenUsageSample(state, { timestamp, backend: "claude-sdk", model, ...usage });
-  }
+function addDayModelTotal(
+  dayModelTotals: Map<string, Map<string, number>>,
+  day: string,
+  model: string,
+  tokens: number,
+) {
+  if (tokens <= 0) return;
+  const models = dayModelTotals.get(day) ?? new Map<string, number>();
+  models.set(model, (models.get(model) ?? 0) + tokens);
+  dayModelTotals.set(day, models);
 }
 
 export function buildWorkspaceTokenUsageByModel(
@@ -465,124 +192,75 @@ export function buildWorkspaceTokenUsageByModel(
   now = Date.now(),
 ): WorkspaceTokenUsageByModelSummary {
   const buckets = new Map<string, TokenBucket>();
-  const historySamples: CumulativeSample[] = [];
+  const dayModelTotals = new Map<string, Map<string, number>>();
   const limitedReasons = new Set<string>();
 
   for (const session of sessions) {
     const state = session.source?.state;
-    const claudeUsage = collectClaudeUsageFromHistory(
-      session.sessionId,
-      session.source?.messageHistory,
-      limitedReasons,
-    );
-    historySamples.push(...claudeUsage.samples);
-    for (const sample of state?.token_usage_samples ?? []) {
-      const normalized = toCumulativeSample(session.sessionId, sample);
-      if (normalized) historySamples.push(normalized);
+    const ledger = tokenUsageLedgerFor(state, session.source?.messageHistory);
+    // Codex reports one total per thread; usage from before per-update attribution follows the session's model.
+    const codexModelAttributionLimited = state?.backend_type === "codex";
+    let allTime = 0;
+    for (const [model, usage] of Object.entries(ledger.totals)) {
+      addUsageToBucket(buckets, session.sessionId, model, usage, { codexModelAttributionLimited });
+      allTime += positiveNumber(usage.totalTokens);
     }
-    addPersistedClaudeUsage(claudeUsage.usageByModel, state);
-    for (const [model, usage] of claudeUsage.usageByModel) {
-      addUsageToBucket(buckets, session.sessionId, model, usage);
+    let daily = 0;
+    for (const [day, models] of Object.entries(tokenUsageDaysFor(ledger, session.backfill))) {
+      daily += dayTotal(models);
+      for (const [model, tokens] of Object.entries(models)) addDayModelTotal(dayModelTotals, day, model, tokens);
     }
-
-    if (state?.backend_type !== "codex" || claudeUsage.usageByModel.size > 0) continue;
-    const model = normalizeModelLabel(state.model);
-    const codexDetails = state.codex_token_details;
-    if (!model || !codexDetails) continue;
-    addUsageToBucket(
-      buckets,
-      session.sessionId,
-      model,
-      {
-        totalTokens: codexDetails.totalTokens,
-        inputTokens: codexDetails.inputTokens,
-        outputTokens: codexDetails.outputTokens,
-        cachedInputTokens: codexDetails.cachedInputTokens,
-        reasoningOutputTokens: codexDetails.reasoningOutputTokens,
-      },
-      { codexModelAttributionLimited: true },
-    );
+    if (daily < allTime) limitedReasons.add(EARLIER_USAGE_REASON);
   }
 
   const models = buildModelRows(buckets);
-
-  const totalTokens = models.reduce((total, row) => total + row.totalTokens, 0);
-
   return {
     models,
-    totalTokens,
-    history: buildHistorySummary(historySamples, now, totalTokens, limitedReasons),
+    totalTokens: models.reduce((total, row) => total + row.totalTokens, 0),
+    history: {
+      ranges: buildRanges(dayModelTotals, now),
+      limited: limitedReasons.size > 0,
+      limitedReasons: [...limitedReasons],
+    },
     generatedAt: now,
   };
 }
 
-interface WorkspaceTokenUsageFingerprint {
-  source: WorkspaceTokenUsageSessionSource | null | undefined;
-  state: WorkspaceTokenUsageSessionSource["state"];
-  messageHistory: BrowserIncomingMessage[] | undefined;
-  messageHistoryLength: number;
-  lastMessage: BrowserIncomingMessage | undefined;
-  tokenSamples: SessionTokenUsageSample[] | undefined;
-  tokenSamplesLength: number;
-  claudeModelUsage: SessionState["claude_model_usage"];
-  claudeTokenDetails: SessionState["claude_token_details"];
-  lastTokenSample: SessionTokenUsageSample | undefined;
-  backendType: SessionState["backend_type"] | undefined;
-  model: string | undefined;
-  codexTotalTokens: number | undefined;
-  codexInputTokens: number | undefined;
-  codexOutputTokens: number | undefined;
-  codexCachedInputTokens: number | undefined;
-  codexReasoningOutputTokens: number | undefined;
-}
+/**
+ * What a session's summary depends on. A session with a ledger depends only on
+ * it (it is replaced, not changed, on every update); one still recorded the old
+ * way depends on the fields its ledger is derived from.
+ */
+type WorkspaceTokenUsageFingerprint = readonly unknown[];
 
-function buildSessionFingerprint(
-  source: WorkspaceTokenUsageSessionSource | null | undefined,
-): WorkspaceTokenUsageFingerprint {
+function buildSessionFingerprint(session: WorkspaceTokenUsageSession): WorkspaceTokenUsageFingerprint {
+  const source = session.source;
+  const state = source?.state;
+  const shared = [source, state, state?.backend_type, state?.model, session.backfill];
+  if (state?.token_usage_ledger) return [...shared, state.token_usage_ledger];
   const messageHistory = source?.messageHistory;
-  const tokenSamples = source?.state?.token_usage_samples;
-  const codexDetails = source?.state?.codex_token_details;
-  return {
-    source,
-    state: source?.state,
+  const samples = state?.token_usage_samples;
+  const codexDetails = state?.codex_token_details;
+  return [
+    ...shared,
     messageHistory,
-    messageHistoryLength: messageHistory?.length ?? 0,
-    lastMessage: messageHistory?.[messageHistory.length - 1],
-    tokenSamples,
-    tokenSamplesLength: tokenSamples?.length ?? 0,
-    claudeModelUsage: source?.state?.claude_model_usage,
-    claudeTokenDetails: source?.state?.claude_token_details,
-    lastTokenSample: tokenSamples?.[tokenSamples.length - 1],
-    backendType: source?.state?.backend_type,
-    model: source?.state?.model,
-    codexTotalTokens: codexDetails?.totalTokens,
-    codexInputTokens: codexDetails?.inputTokens,
-    codexOutputTokens: codexDetails?.outputTokens,
-    codexCachedInputTokens: codexDetails?.cachedInputTokens,
-    codexReasoningOutputTokens: codexDetails?.reasoningOutputTokens,
-  };
+    messageHistory?.length ?? 0,
+    messageHistory?.[messageHistory.length - 1],
+    samples,
+    samples?.length ?? 0,
+    samples?.[samples.length - 1],
+    state?.claude_model_usage,
+    state?.claude_token_details,
+    codexDetails?.totalTokens,
+    codexDetails?.inputTokens,
+    codexDetails?.outputTokens,
+    codexDetails?.cachedInputTokens,
+    codexDetails?.reasoningOutputTokens,
+  ];
 }
 
 function fingerprintsMatch(left: WorkspaceTokenUsageFingerprint, right: WorkspaceTokenUsageFingerprint): boolean {
-  return (
-    left.source === right.source &&
-    left.state === right.state &&
-    left.messageHistory === right.messageHistory &&
-    left.messageHistoryLength === right.messageHistoryLength &&
-    left.lastMessage === right.lastMessage &&
-    left.tokenSamples === right.tokenSamples &&
-    left.tokenSamplesLength === right.tokenSamplesLength &&
-    left.claudeModelUsage === right.claudeModelUsage &&
-    left.claudeTokenDetails === right.claudeTokenDetails &&
-    left.lastTokenSample === right.lastTokenSample &&
-    left.backendType === right.backendType &&
-    left.model === right.model &&
-    left.codexTotalTokens === right.codexTotalTokens &&
-    left.codexInputTokens === right.codexInputTokens &&
-    left.codexOutputTokens === right.codexOutputTokens &&
-    left.codexCachedInputTokens === right.codexCachedInputTokens &&
-    left.codexReasoningOutputTokens === right.codexReasoningOutputTokens
-  );
+  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 export class WorkspaceTokenUsageSummaryCache {
@@ -603,7 +281,7 @@ export class WorkspaceTokenUsageSummaryCache {
     let changed = !this.cachedSummary || dayChanged || this.sessionEntries.size !== sessions.length;
 
     for (const session of sessions) {
-      const fingerprint = buildSessionFingerprint(session.source);
+      const fingerprint = buildSessionFingerprint(session);
       const previous = this.sessionEntries.get(session.sessionId);
       if (!dayChanged && previous && fingerprintsMatch(previous.fingerprint, fingerprint)) {
         nextEntries.set(session.sessionId, previous);
@@ -633,10 +311,8 @@ function mergeSessionSummaries(
 ): WorkspaceTokenUsageByModelSummary {
   const modelBuckets = new Map<string, TokenBucket>();
   const limitedReasons = new Set<string>();
-  const historyByRange = new Map<WorkspaceTokenUsageRangeId, Map<string, Map<string, number>>>();
-  for (const range of HISTOGRAM_RANGES) {
-    historyByRange.set(range.id, new Map(buildDayKeys(range.days, now).map((day) => [day, new Map()])));
-  }
+  const dayModelTotals = new Map<string, Map<string, number>>();
+  const longestRange = HISTOGRAM_RANGES.reduce((longest, range) => (range.days > longest.days ? range : longest));
 
   for (const [sessionId, { summary }] of entries) {
     for (const row of summary.models) {
@@ -645,48 +321,18 @@ function mergeSessionSummaries(
       });
     }
     for (const reason of summary.history.limitedReasons) limitedReasons.add(reason);
-    for (const range of summary.history.ranges) {
-      const dayTotals = historyByRange.get(range.id);
-      if (!dayTotals) continue;
-      for (const bucket of range.buckets) {
-        const modelTotals = dayTotals.get(bucket.date);
-        if (!modelTotals) continue;
-        for (const model of bucket.models) {
-          modelTotals.set(model.model, (modelTotals.get(model.model) ?? 0) + model.totalTokens);
-        }
-      }
+    // Every shorter range is a suffix of the longest one.
+    for (const bucket of summary.history.ranges.find((range) => range.id === longestRange.id)?.buckets ?? []) {
+      for (const model of bucket.models) addDayModelTotal(dayModelTotals, bucket.date, model.model, model.totalTokens);
     }
   }
 
   const models = buildModelRows(modelBuckets);
-  const ranges = HISTOGRAM_RANGES.map((range) => {
-    const dayTotals = historyByRange.get(range.id) ?? new Map();
-    const buckets = [...dayTotals.entries()].map(([date, modelTotals]) => {
-      const histogramModels = [...modelTotals.entries()]
-        .map(([model, totalTokens]) => ({ model, totalTokens }))
-        .filter((entry) => entry.totalTokens > 0)
-        .sort((a, b) => b.totalTokens - a.totalTokens || a.model.localeCompare(b.model));
-      return {
-        date,
-        totalTokens: histogramModels.reduce((total, entry) => total + entry.totalTokens, 0),
-        models: histogramModels,
-      };
-    });
-    return {
-      id: range.id,
-      label: range.label,
-      days: range.days,
-      granularity: "day" as const,
-      totalTokens: buckets.reduce((total, bucket) => total + bucket.totalTokens, 0),
-      buckets,
-    };
-  });
-
   return {
     models,
     totalTokens: models.reduce((total, row) => total + row.totalTokens, 0),
     history: {
-      ranges,
+      ranges: buildRanges(dayModelTotals, now),
       limited: limitedReasons.size > 0,
       limitedReasons: [...limitedReasons],
     },

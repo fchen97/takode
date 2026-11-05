@@ -68,7 +68,11 @@ import type {
   SessionContextLengthSnapshot,
   SessionLifecycleEvent,
 } from "./codex-context-types.js";
-import type { ClaudeModelTokenUsage, SessionTokenUsageSample } from "./workspace-token-usage-types.js";
+import type {
+  ClaudeModelTokenUsage,
+  SessionTokenUsageLedger,
+  SessionTokenUsageSample,
+} from "./workspace-token-usage-types.js";
 export type {
   CodexAutoPauseRecoveryLink,
   CodexAutoPauseRecoveryOutcome,
@@ -127,7 +131,11 @@ export type {
   SessionContextLengthSnapshot,
   SessionLifecycleEvent,
 } from "./codex-context-types.js";
-export type { ClaudeModelTokenUsage, SessionTokenUsageSample } from "./workspace-token-usage-types.js";
+export type {
+  ClaudeModelTokenUsage,
+  SessionTokenUsageLedger,
+  SessionTokenUsageSample,
+} from "./workspace-token-usage-types.js";
 
 // Types for the WebSocket bridge between Claude Code CLI and the browser
 
@@ -1698,8 +1706,13 @@ export interface SessionState extends BackendSessionState {
     reasoningOutputTokens: number;
     modelContextWindow: number;
   };
-  /** Bounded cumulative token snapshots used for best-effort workspace usage histograms. */
+  /**
+   * Retired: bounded cumulative token snapshots. Read only to convert sessions
+   * recorded before `token_usage_ledger`; the conversion removes them.
+   */
   token_usage_samples?: SessionTokenUsageSample[];
+  /** Running all-time and per-day token usage, the source of the workspace token totals. */
+  token_usage_ledger?: SessionTokenUsageLedger;
   /** Resolved Codex leader recycle threshold for display-only effective context metrics. */
   codex_leader_recycle_threshold_tokens?: number;
   // Claude/CloudCode token details (forwarded from result.modelUsage)

@@ -66,7 +66,7 @@ import {
   clearOrphanedCodexProviderRetryState,
   setCodexProviderRetryState,
 } from "./codex-provider-retry-state.js";
-import { appendTokenUsageSample } from "../workspace-token-usage.js";
+import { ensureTokenUsageLedger, recordCodexTokenUsage } from "../workspace-token-usage-ledger.js";
 
 const TOOL_PROGRESS_OUTPUT_LIMIT = 12_000;
 const DELEGATE_LIVE_ACTIVITY_LIMIT = 800;
@@ -1042,24 +1042,14 @@ export async function handleCodexAdapterBrowserMessage(
       session,
       withCodexLeaderDisplayBudget(session, { ...sanitized, backend_type: "codex" }, launcherInfo),
     );
+    // Convert a session recorded before the ledger while the state still holds the previous total.
+    ensureTokenUsageLedger(session.state, session.messageHistory, Date.now());
     session.state = { ...session.state, ...enriched };
     if ("context_used_percent" in enriched || "codex_token_details" in enriched) {
       recordContextUsageHistory(session, "codex_token_usage");
     }
     const codexTokenDetails = enriched.codex_token_details as SessionState["codex_token_details"] | undefined;
-    if (codexTokenDetails) {
-      appendTokenUsageSample(session.state, {
-        timestamp: Date.now(),
-        backend: "codex",
-        model: session.state.model,
-        totalTokens: codexTokenDetails.totalTokens,
-        inputTokens: codexTokenDetails.inputTokens,
-        outputTokens: codexTokenDetails.outputTokens,
-        cachedInputTokens: codexTokenDetails.cachedInputTokens,
-        reasoningOutputTokens: codexTokenDetails.reasoningOutputTokens,
-        codexModelAttributionLimited: true,
-      });
-    }
+    recordCodexTokenUsage(session.state, codexTokenDetails, Date.now());
     outgoing = {
       ...msg,
       session: enriched as unknown as typeof msg.session,

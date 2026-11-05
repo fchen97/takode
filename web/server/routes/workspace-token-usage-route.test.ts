@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { TOKEN_USAGE_CARRYOVER_FILE } from "../workspace-token-usage-carryover.js";
+import { TOKEN_USAGE_BACKFILL_FILE, TOKEN_USAGE_CARRYOVER_FILE } from "../workspace-token-usage-carryover.js";
 import { registerWorkspaceTokenUsageRoute } from "./workspace-token-usage-route.js";
 
 // After a coordinator handoff, archived sessions from the previous coordinator
@@ -68,6 +68,30 @@ describe("workspace token usage route", () => {
     const json = await res.json();
     expect(json.totalTokens).toBe(1_100);
     expect(json.models).toMatchObject([{ model: "gpt-5.5", totalTokens: 1_100, sessionCount: 2 }]);
+  });
+
+  it("adds days rebuilt by an approved backfill to their sessions", async () => {
+    // The backfill file holds days rebuilt from Codex logs for sessions whose
+    // samples had already been trimmed; it applies without a restart.
+    const app = buildApp(sessionsDir);
+    const week = async () =>
+      (await (await app.request("/sessions/token-usage-by-model")).json()).history.ranges.find(
+        (range: { id: string }) => range.id === "week",
+      );
+    expect((await week()).totalTokens).toBe(0);
+
+    const date = new Date();
+    const today = `${date.getFullYear()}-${`${date.getMonth() + 1}`.padStart(2, "0")}-${`${date.getDate()}`.padStart(2, "0")}`;
+    await mkdir(join(sessionsDir, "token-usage"), { recursive: true });
+    await writeFile(
+      join(sessionsDir, TOKEN_USAGE_BACKFILL_FILE),
+      JSON.stringify({
+        version: 1,
+        sessions: [{ sessionId: "own-session", cutoff: 1, days: { [today]: { "gpt-5.5": 70 } } }],
+      }),
+    );
+
+    expect((await week()).totalTokens).toBe(70);
   });
 
   it("counts only its own sessions when nothing was carried over", async () => {

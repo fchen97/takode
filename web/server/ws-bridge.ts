@@ -811,6 +811,7 @@ export class WsBridge {
       setLastUserMessageAt: (sessionId, timestamp) => this.launcher?.setLastUserMessageAt(sessionId, timestamp),
       resumeRecoveryDeliveryTransfers: (session) =>
         resumeRecoveryDeliveryTransfers(session as Session, getRecoveryDeliveryTransferDepsForBridge(this)),
+      persistConvertedTokenUsage: (session) => this.persistSession(session as Session),
       persistHistoryMetadataRepair: async (session, expectedFrozenCount) => {
         if (!this.store) return;
         await this.store.rewriteFrozenHistoryMetadata(

@@ -31,7 +31,7 @@ import {
   type TokenUsage,
 } from "./context-usage.js";
 import { computeSessionTurnMetrics } from "../user-message-classification.js";
-import { recordClaudeResultTokenUsage } from "../workspace-token-usage.js";
+import { ensureTokenUsageLedger, recordClaudeResultTokenUsage } from "../workspace-token-usage-ledger.js";
 import { isResultStopReasonInterrupted, isTerminalResultInterrupted } from "../result-interruption.js";
 import { markRecentAskVisibleResponseFromStream } from "../recent-ask-bundles.js";
 import {
@@ -250,8 +250,11 @@ export interface ResultMessageSessionLike {
     | "num_turns"
     | "context_used_percent"
     | "claude_token_details"
+    | "backend_type"
+    | "codex_token_details"
     | "claude_model_usage"
     | "token_usage_samples"
+    | "token_usage_ledger"
     | "leaderThreadStatuses"
     | "slackThreadChild"
   >;
@@ -959,6 +962,8 @@ export function handleResultMessage(
   if (typeof nextContextPct === "number") {
     session.state.context_used_percent = nextContextPct;
   }
+  // Convert a session recorded before the ledger while the state still holds the previous totals.
+  ensureTokenUsageLedger(session.state, session.messageHistory, Date.now());
   const nextClaudeTokenDetails = extractClaudeTokenDetails(msg.modelUsage, session.state.model, autoCompactWindow);
   if (nextClaudeTokenDetails) {
     session.state.claude_token_details = nextClaudeTokenDetails;

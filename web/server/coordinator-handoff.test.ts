@@ -442,17 +442,10 @@ describe("coordinator handoff", () => {
     ]);
     const archived = carried.sessions[1];
     expect(archived.sessionNum).toBe(12);
-    // Only token fields travel, and only samples that can still reach a daily
-    // bucket plus the baseline right before them.
-    expect(Object.keys(archived.state).sort()).toEqual([
-      "backend_type",
-      "codex_token_details",
-      "model",
-      "token_usage_samples",
-    ]);
-    expect(archived.state.token_usage_samples.map((sample: { totalTokens: number }) => sample.totalTokens)).toEqual([
-      500, 900,
-    ]);
+    // Only token usage travels, as a ledger with the days that can still reach
+    // the chart: the growth between the last two samples.
+    expect(Object.keys(archived.state).sort()).toEqual(["backend_type", "model", "token_usage_ledger"]);
+    expect(Object.values(archived.state.token_usage_ledger.convertedDays)).toEqual([{ "gpt-5.5": 400 }]);
 
     const summary = buildWorkspaceTokenUsageByModel(
       await loadCarriedOverTokenUsage(join(devboxHome, ".companion", "sessions", "3456")),
