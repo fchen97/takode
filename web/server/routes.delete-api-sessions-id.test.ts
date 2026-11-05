@@ -540,6 +540,49 @@ describe("DELETE /api/sessions/:id", () => {
     expect(await treeGroupStore.getGroupForSession("s1")).toBeUndefined();
   });
 
+  it("keeps a deleted session's token usage in the workspace totals", async () => {
+    // Deleting a session removes its files, but its usage still counts toward
+    // all-time and past days: it joins the carried-over token usage file.
+    const sessionsDir = await mkdtemp(join(tmpdir(), "routes-delete-token-usage-"));
+    try {
+      const store = { ...createMockStore(), directory: sessionsDir };
+      const deleteApp = new Hono();
+      const terminalManager = { getInfo: () => null, spawn: () => "", kill: () => {} } as any;
+      deleteApp.route(
+        "/api",
+        createRoutes(launcher, bridge, store, tracker, terminalManager, undefined, recorder, undefined, timerManager),
+      );
+      launcher.getSession.mockReturnValue({ sessionId: "s1", sessionNum: 42, state: "connected", cwd: "/test" });
+      ensureBridgeSession(bridge, "s1", {
+        state: {
+          backend_type: "codex",
+          model: "gpt-6",
+          codex_token_details: {
+            totalTokens: 900,
+            inputTokens: 900,
+            outputTokens: 0,
+            cachedInputTokens: 0,
+            reasoningOutputTokens: 0,
+            modelContextWindow: 1,
+          },
+        },
+      });
+
+      expect((await deleteApp.request("/api/sessions/s1", { method: "DELETE" })).status).toBe(200);
+
+      const carried = JSON.parse(await readFile(join(sessionsDir, "token-usage", "carried-over.json"), "utf-8"));
+      expect(carried.sessions).toMatchObject([
+        {
+          sessionId: "s1",
+          sessionNum: 42,
+          state: { token_usage_ledger: { totals: { "gpt-6": { totalTokens: 900 } } } },
+        },
+      ]);
+    } finally {
+      await rm(sessionsDir, { recursive: true, force: true });
+    }
+  });
+
   it("kills, removes, and closes session", async () => {
     const res = await app.request("/api/sessions/s1", { method: "DELETE" });
 

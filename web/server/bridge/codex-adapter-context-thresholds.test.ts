@@ -207,40 +207,39 @@ describe("Codex adapter context thresholds", () => {
     expect(session.state.codex_token_details.modelContextWindow).toBe(3_027_778);
   });
 
-  it("records timestamped Codex token usage samples from session updates", async () => {
-    // Histograms cannot reconstruct Codex history from only the latest total,
-    // so adapter updates must preserve timestamped cumulative samples.
+  it("records Codex token usage growth in the session's ledger", async () => {
+    // Each update adds the growth since the thread's previous cumulative total,
+    // attributed to the model in use, to all-time and per-day totals.
     const session = makeSession();
     session.state.model = "gpt-5.5";
     const broadcasts: BrowserIncomingMessage[] = [];
-
-    await handleCodexAdapterBrowserMessage(
-      session,
-      {
-        type: "session_update",
-        session: {
-          backend_type: "codex",
-          codex_token_details: {
-            totalTokens: 1_200_000,
-            inputTokens: 1_150_000,
-            outputTokens: 50_000,
-            cachedInputTokens: 930_000,
-            reasoningOutputTokens: 2_000,
-            modelContextWindow: 258_400,
+    const update = (totalTokens: number) =>
+      handleCodexAdapterBrowserMessage(
+        session,
+        {
+          type: "session_update",
+          session: {
+            backend_type: "codex",
+            codex_token_details: {
+              totalTokens,
+              inputTokens: totalTokens,
+              outputTokens: 0,
+              cachedInputTokens: 0,
+              reasoningOutputTokens: 0,
+              modelContextWindow: 258_400,
+            },
           },
-        },
-      } as BrowserIncomingMessage,
-      makeDeps(broadcasts),
-    );
+        } as BrowserIncomingMessage,
+        makeDeps(broadcasts),
+      );
 
-    expect(session.state.token_usage_samples).toEqual([
-      expect.objectContaining({
-        backend: "codex",
-        model: "gpt-5.5",
-        totalTokens: 1_200_000,
-        codexModelAttributionLimited: true,
-      }),
-    ]);
-    expect(session.state.token_usage_samples?.[0].timestamp).toEqual(expect.any(Number));
+    await update(1_200_000);
+    await update(1_500_000);
+
+    const ledger = session.state.token_usage_ledger;
+    expect(ledger?.counters.codex.totalTokens).toBe(1_500_000);
+    expect(ledger?.totals["gpt-5.5"].totalTokens).toBe(1_500_000);
+    expect(Object.values(ledger?.days ?? {})).toEqual([{ "gpt-5.5": 1_500_000 }]);
+    expect(session.state.token_usage_samples).toBeUndefined();
   });
 });

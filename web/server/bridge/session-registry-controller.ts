@@ -1,3 +1,4 @@
+import { ensureTokenUsageLedger } from "../workspace-token-usage-ledger.js";
 import { readSessionDraftsState } from "../../shared/session-drafts.js";
 import { normalizePersistedBackendType } from "../session-types.js";
 import { sessionTag } from "../session-tag.js";
@@ -595,6 +596,7 @@ export async function restorePersistedSessions(
     setLastUserMessageAt?: (sessionId: string, timestamp: number | undefined) => void;
     resumeRecoveryDeliveryTransfers?: (session: SessionLike) => Promise<void>;
     persistHistoryMetadataRepair?: (session: SessionLike, expectedFrozenCount: number) => Promise<void>;
+    persistConvertedTokenUsage?: (session: SessionLike) => void;
   },
 ): Promise<number> {
   let count = 0;
@@ -780,6 +782,11 @@ export async function restorePersistedSessions(
       );
     }
     await deps.resumeRecoveryDeliveryTransfers?.(session);
+    // One-time conversion to the token usage ledger, while the full history is loaded.
+    // Archived sessions are not rewritten here; their ledger is derived for display.
+    if (ensureTokenUsageLedger(session.state, session.messageHistory, Date.now())) {
+      deps.persistConvertedTokenUsage?.(session);
+    }
     count += 1;
   }
   if (count > 0) {

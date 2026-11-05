@@ -7,12 +7,37 @@ import * as treeGroupStore from "../tree-group-store.js";
 import { getActorSessionId, getArchiveSource } from "./sessions-helpers.js";
 import { broadcastSessionDeletedAndClose } from "./session-lifecycle-broadcast.js";
 import { cleanupWorktree } from "./worktree-cleanup.js";
+import {
+  pickCarriedOverTokenUsageState,
+  type WorkspaceTokenUsageRetainedStore,
+} from "../workspace-token-usage-carryover.js";
+import type { BrowserIncomingMessage } from "../session-types.js";
+
+/**
+ * A deleted session still counts toward the workspace's all-time and daily
+ * token usage, so its usage is kept before its files go. A failure here only
+ * loses that session's usage; it does not stop the deletion.
+ */
+async function retainDeletedSessionTokenUsage(
+  retained: WorkspaceTokenUsageRetainedStore | undefined,
+  sessionId: string,
+  session: { state?: unknown; messageHistory?: BrowserIncomingMessage[] } | null | undefined,
+  sessionNum: number | undefined,
+): Promise<void> {
+  if (!retained || !session) return;
+  const state = pickCarriedOverTokenUsageState(session.state, Date.now(), session.messageHistory);
+  if (!state) return;
+  await retained
+    .retain({ sessionId, ...(Number.isInteger(sessionNum) ? { sessionNum } : {}), state })
+    .catch((error) => console.warn(`[token-usage] Could not keep deleted session ${sessionId}'s usage:`, error));
+}
 
 export function registerSessionDeleteRoute(
   api: Hono,
   ctx: RouteContext,
   pendingWorktreeCleanups: Map<string, Promise<void>>,
   auxiliary?: AuxiliaryWorktreeLifecycle,
+  tokenUsageRetained?: WorkspaceTokenUsageRetainedStore,
 ) {
   const { resolveId, launcher, authenticateCompanionCallerOptional, wsBridge, worktreeTracker, prPoller, imageStore } =
     ctx;
@@ -57,6 +82,7 @@ export function registerSessionDeleteRoute(
       await gitUtils.deleteArchivedRefAsync(sessionInfo.repoRoot, sessionInfo.actualBranch);
     }
     prPoller?.unwatch(id);
+    await retainDeletedSessionTokenUsage(tokenUsageRetained, id, wsBridge.getSession(id), sessionInfo?.sessionNum);
     launcher.removeSession(id);
     // Broadcast deletion to all browsers BEFORE closing the session sockets.
     // This ensures every browser tab (not just the one that triggered delete)
