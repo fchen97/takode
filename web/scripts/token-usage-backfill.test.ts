@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseRolloutLine, rebuildDays, type CodexTokenEvent } from "./token-usage-backfill.js";
+import { findClaudeResults, parseRolloutLine, rebuildDays, type CodexTokenEvent } from "./token-usage-backfill.js";
 
 // The backfill rebuilds Codex sessions' daily usage from Codex's rollout logs.
 // It must count each token update once, and never count a whole cumulative
@@ -82,5 +82,24 @@ describe("token usage backfill from Codex rollouts", () => {
         formatDay: day,
       }),
     ).toEqual({});
+  });
+
+  it("finds Claude results in any history envelope", () => {
+    // History files nest messages differently (frozen log lines, journal
+    // records, the hot file's array); only results with usage and a time count.
+    const result = (timestamp: number) => ({
+      type: "result",
+      timestamp,
+      data: { uuid: `r${timestamp}`, modelUsage: { opus: { inputTokens: timestamp } } },
+    });
+    expect(
+      findClaudeResults([
+        "history",
+        2,
+        "session",
+        { messages: [result(1), { type: "assistant" }, { type: "result" }] },
+      ]),
+    ).toEqual([{ timestamp: 1, uuid: "r1", modelUsage: { opus: { inputTokens: 1 } } }]);
+    expect(findClaudeResults([result(2), result(3)]).map((found) => found.timestamp)).toEqual([2, 3]);
   });
 });
