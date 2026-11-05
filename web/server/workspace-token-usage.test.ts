@@ -8,6 +8,8 @@ import {
 import type { BrowserIncomingMessage, SessionState } from "./session-types.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const EARLIER_USAGE_REASON =
+  "Usage from before a session's daily tracking began, or older than its kept days, counts in all-time totals but not in daily buckets.";
 
 function localDateString(timestamp: number): string {
   const date = new Date(timestamp);
@@ -203,9 +205,10 @@ describe("buildWorkspaceTokenUsageByModel", () => {
     ]);
   });
 
-  it("builds daily histogram buckets from timestamped cumulative usage deltas", () => {
-    // Daily buckets use deltas between timestamped cumulative snapshots. The
-    // first sample for a session/model is a baseline, not usage for that day.
+  it("converts the samples of a session recorded before the ledger into days", () => {
+    // Sessions recorded before the ledger kept cumulative samples. The growth
+    // between them gives their days; the first sample is a baseline, so the
+    // usage before it counts only in all-time totals.
     const now = new Date(2026, 0, 8, 12).getTime();
     const day3 = now - 3 * DAY_MS;
     const day2 = now - 2 * DAY_MS;
@@ -230,8 +233,6 @@ describe("buildWorkspaceTokenUsageByModel", () => {
                 { timestamp: day3, backend: "codex", model: "gpt-5.5", totalTokens: 100 },
                 { timestamp: day2, backend: "codex", model: "gpt-5.5", totalTokens: 150 },
                 { timestamp: day1, backend: "codex", model: "gpt-5.5", totalTokens: 220 },
-                { timestamp: day2, backend: "claude-sdk", model: "opus 4.7", inputTokens: 20, outputTokens: 0 },
-                { timestamp: day1, backend: "claude-sdk", model: "opus 4.7", inputTokens: 45, outputTokens: 0 },
               ],
             },
           },
@@ -241,21 +242,19 @@ describe("buildWorkspaceTokenUsageByModel", () => {
     );
 
     const week = summary.history.ranges.find((range) => range.id === "week")!;
-    expect(week.totalTokens).toBe(145);
+    expect(week.totalTokens).toBe(120);
     expect(week.buckets.find((bucket) => bucket.date === localDateString(day2))).toMatchObject({
       totalTokens: 50,
       models: [{ model: "gpt-5.5", totalTokens: 50 }],
     });
     expect(week.buckets.find((bucket) => bucket.date === localDateString(day1))).toMatchObject({
-      totalTokens: 95,
-      models: [
-        { model: "gpt-5.5", totalTokens: 70 },
-        { model: "opus 4.7", totalTokens: 25 },
-      ],
+      totalTokens: 70,
+      models: [{ model: "gpt-5.5", totalTokens: 70 }],
     });
+    expect(summary.history.limitedReasons).toEqual([EARLIER_USAGE_REASON]);
   });
 
-  it("limits daily history to timestamped samples without inventing unsupported buckets", () => {
+  it("does not invent days for usage recorded without a timestamp", () => {
     const now = new Date(2026, 0, 8, 12).getTime();
     const summary = buildWorkspaceTokenUsageByModel(
       [
@@ -283,9 +282,7 @@ describe("buildWorkspaceTokenUsageByModel", () => {
     expect(summary.totalTokens).toBe(120);
     expect(week.totalTokens).toBe(0);
     expect(summary.history.limited).toBe(true);
-    expect(summary.history.limitedReasons).toContain(
-      "Some cumulative result totals have no timestamp, so they are excluded from daily buckets.",
-    );
+    expect(summary.history.limitedReasons).toEqual([EARLIER_USAGE_REASON]);
   });
 
   it("enumerates local calendar days without skipping the spring DST transition", () => {
@@ -431,48 +428,36 @@ describe("buildWorkspaceTokenUsageByModel", () => {
 
 describe("Claude usage kept in session state", () => {
   // Message history is not loaded for archived sessions, and sessions carried
-  // over from another coordinator have none, so Claude totals must also be
-  // readable from session state.
-  type ClaudeState = Pick<SessionState, "backend_type" | "model" | "claude_model_usage" | "token_usage_samples">;
+  // over from another coordinator have none, so Claude totals and days must be
+  // readable from session state alone.
+  type ClaudeState = Pick<SessionState, "backend_type" | "model" | "claude_model_usage" | "token_usage_ledger">;
   const sonnetUsage = (inputTokens: number) => ({
     "claude-sonnet": { inputTokens, outputTokens: 5, cacheReadInputTokens: 3, cacheCreationInputTokens: 2 },
   });
 
-  it("records the latest cumulative usage per model and a timestamped sample for each", () => {
-    const state: Pick<SessionState, "claude_model_usage" | "token_usage_samples"> = {};
-    recordClaudeResultTokenUsage(state, sonnetUsage(10) as never, 1_000);
+  it("records the latest cumulative usage per model and the growth per day", () => {
+    const now = new Date(2026, 0, 8, 12).getTime();
+    const state: Pick<SessionState, "claude_model_usage" | "token_usage_ledger"> = {};
+    recordClaudeResultTokenUsage(state, sonnetUsage(10) as never, now - DAY_MS);
     recordClaudeResultTokenUsage(
       state,
       {
         ...sonnetUsage(40),
         "claude-haiku": { inputTokens: 7, outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 },
       } as never,
-      2_000,
+      now,
     );
 
     expect(state.claude_model_usage).toEqual({
       "claude-sonnet": { inputTokens: 40, outputTokens: 5, cachedInputTokens: 5 },
       "claude-haiku": { inputTokens: 7, outputTokens: 0, cachedInputTokens: 0 },
     });
-    expect(state.token_usage_samples).toEqual([
-      {
-        timestamp: 1_000,
-        backend: "claude-sdk",
-        model: "claude-sonnet",
-        inputTokens: 10,
-        outputTokens: 5,
-        cachedInputTokens: 5,
-      },
-      {
-        timestamp: 2_000,
-        backend: "claude-sdk",
-        model: "claude-sonnet",
-        inputTokens: 40,
-        outputTokens: 5,
-        cachedInputTokens: 5,
-      },
-      { timestamp: 2_000, backend: "claude-sdk", model: "claude-haiku", inputTokens: 7 },
-    ]);
+    // A new session starts from zero, so its first result is usage too.
+    expect(state.token_usage_ledger?.days).toEqual({
+      [localDateString(now - DAY_MS)]: { "claude-sonnet": 20 },
+      [localDateString(now)]: { "claude-sonnet": 30, "claude-haiku": 7 },
+    });
+    expect(state.token_usage_ledger?.totals["claude-sonnet"]).toMatchObject({ totalTokens: 50, inputTokens: 40 });
   });
 
   it("counts an archived Claude session from state when its history is not loaded", () => {
@@ -497,12 +482,12 @@ describe("Claude usage kept in session state", () => {
         sessionCount: 1,
       },
     ]);
-    expect(summary.history.ranges.find((range) => range.id === "week")?.totalTokens).toBe(30);
+    expect(summary.history.ranges.find((range) => range.id === "week")?.totalTokens).toBe(50);
+    expect(summary.history.limited).toBe(false);
   });
 
-  it("does not double count a live session whose result is both in history and in state", () => {
-    // The state sample carries the same timestamp and cumulative value as the
-    // history-derived one, so it adds no daily growth and no extra total.
+  it("does not double count a live session whose result is both in history and in the ledger", () => {
+    // Once a session has a ledger, history is no longer read for usage.
     const now = new Date(2026, 0, 8, 12).getTime();
     const state: ClaudeState = { backend_type: "claude-sdk", model: "claude-sonnet" };
     const history: BrowserIncomingMessage[] = [];
@@ -520,7 +505,7 @@ describe("Claude usage kept in session state", () => {
     );
 
     expect(summary.totalTokens).toBe(50);
-    expect(summary.history.ranges.find((range) => range.id === "week")?.totalTokens).toBe(30);
+    expect(summary.history.ranges.find((range) => range.id === "week")?.totalTokens).toBe(50);
   });
 
   it("falls back to the summed claude_token_details for sessions recorded before the per-model map", () => {

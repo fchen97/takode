@@ -279,6 +279,7 @@ import {
   type UserDispatchTurnTarget,
   trackUserMessageForTurn as trackUserMessageForTurnLifecycle,
 } from "./bridge/generation-lifecycle.js";
+import { reconcileRestoredBoardRows } from "./bridge/restored-board-state.js";
 import { runWsBridgeStuckSessionWatchdogSweep } from "./bridge/stuck-session-watchdog-controller.js";
 import { buildTurnToolSummary as buildTurnToolSummaryController } from "./bridge/turn-tool-summary.js";
 import {
@@ -805,10 +806,11 @@ export class WsBridge {
         this.finalizeRecoveredDisconnectedTerminalTools(session as Session, reason),
       scheduleCodexToolResultWatchdogs: (session, reason) =>
         this.scheduleCodexToolResultWatchdogs(session as Session, reason),
-      reconcileRestoredBoardState: (session) => this.reconcileRestoredBoardState(session as Session),
+      reconcileRestoredBoardState: (session) => reconcileRestoredBoardRows(session as Session, this.resolveQuestStatus),
       setLastUserMessageAt: (sessionId, timestamp) => this.launcher?.setLastUserMessageAt(sessionId, timestamp),
       resumeRecoveryDeliveryTransfers: (session) =>
         resumeRecoveryDeliveryTransfers(session as Session, getRecoveryDeliveryTransferDepsForBridge(this)),
+      persistConvertedTokenUsage: (session) => this.persistSession(session as Session),
       persistHistoryMetadataRepair: async (session, expectedFrozenCount) => {
         if (!this.store) return;
         await this.store.rewriteFrozenHistoryMetadata(
@@ -817,25 +819,6 @@ export class WsBridge {
         );
       },
     });
-  }
-
-  private async reconcileRestoredBoardState(session: Session): Promise<void> {
-    if (!this.resolveQuestStatus || session.board.size === 0) return;
-    for (const [questId] of [...session.board]) {
-      try {
-        const status = await this.resolveQuestStatus(questId);
-        // q-112: the board lifecycle is decoupled from most quest statuses.
-        // Restore should only drop rows that are definitely terminal/missing,
-        // not queued ideas or verification-stage items that are still active on
-        // the leader's board.
-        if (status === "done" || status === null) {
-          session.board.delete(questId);
-          session.boardStallStates.delete(questId);
-        }
-      } catch {
-        // If quest status cannot be resolved, preserve the row and let normal runtime paths decide.
-      }
-    }
   }
 
   /** Persist a session to disk (debounced). */

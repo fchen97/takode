@@ -17,6 +17,7 @@ import {
   mergeCarriedOverTokenUsage,
   parseCarriedOverTokenUsage,
   pickCarriedOverTokenUsageState,
+  TOKEN_USAGE_BACKFILL_FILE,
   TOKEN_USAGE_CARRYOVER_FILE,
   type CarriedOverTokenUsageSession,
 } from "./workspace-token-usage-carryover.js";
@@ -452,6 +453,9 @@ async function planHandoff(input: {
   });
   const carriedOver = mergeCarriedOverTokenUsage(parseCarriedOverTokenUsage(previousCarryover), leftBehind);
   if (carriedOver.sessions.length > 0) entries.push({ path: carryoverPath, content: JSON.stringify(carriedOver) });
+  // Days rebuilt from backend logs, for moving and carried-over sessions alike.
+  const backfillPath = `${sessionsDir}/${TOKEN_USAGE_BACKFILL_FILE}`;
+  if (await exists(join(companion, backfillPath))) entries.push({ path: backfillPath });
   const acknowledgements = `${sessionsDir}/model-provenance-migration-acknowledgements.json`;
   if (await exists(join(companion, acknowledgements))) entries.push({ path: acknowledgements });
 

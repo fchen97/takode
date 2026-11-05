@@ -85,6 +85,7 @@ import { buildBrowserSessionDetail } from "./session-detail-response.js";
 import { treeGroupUpdates } from "../bridge/tree-group-updates.js";
 import { setLibrarySessionCreator } from "../library-session-creator.js";
 import { registerWorkspaceTokenUsageRoute } from "./workspace-token-usage-route.js";
+import { WorkspaceTokenUsageRetainedStore } from "../workspace-token-usage-carryover.js";
 import { createSessionProjectMetaBackfill } from "./session-project-meta.js";
 
 export function createSessionsRoutes(ctx: RouteContext) {
@@ -111,6 +112,10 @@ export function createSessionsRoutes(ctx: RouteContext) {
     launcher,
   });
   const pendingWorktreeCleanups = new Map<string, Promise<void>>();
+  // Token usage of sessions this coordinator no longer has (carried over or deleted).
+  const tokenUsageRetained = new WorkspaceTokenUsageRetainedStore(
+    typeof sessionStore?.directory === "string" ? sessionStore.directory : undefined,
+  );
   const sessionAttentionDeps = {
     broadcastToBrowsers: (session: NonNullable<ReturnType<typeof wsBridge.getSession>>, msg: unknown) =>
       wsBridge.broadcastToSession(session.id, msg as any),
@@ -1220,7 +1225,7 @@ export function createSessionsRoutes(ctx: RouteContext) {
     );
   });
   registerArchivedSessionPageRoute(api, sessionSnapshotDeps);
-  registerWorkspaceTokenUsageRoute(api, { launcher, wsBridge, sessionStore });
+  registerWorkspaceTokenUsageRoute(api, { launcher, wsBridge, sessionStore }, tokenUsageRetained);
   registerSessionSearchRoute(api, { launcher, wsBridge, authenticateCompanionCallerOptional });
   registerGlobalStarredMessageSearchRoute(api, { launcher, wsBridge });
   registerGlobalRecentAsksRoute(api, { launcher, wsBridge });
@@ -1828,7 +1833,7 @@ export function createSessionsRoutes(ctx: RouteContext) {
     console.log(`[revert] === REVERT COMPLETE === session=${id.slice(0, 8)}`);
     return c.json({ ok: true });
   });
-  registerSessionDeleteRoute(api, ctx, pendingWorktreeCleanups, auxiliary);
+  registerSessionDeleteRoute(api, ctx, pendingWorktreeCleanups, auxiliary, tokenUsageRetained);
   registerSessionsArchiveRoutes(api, {
     isAuxiliaryCleanupPending: (id) => auxiliary?.isCleaning(id) ?? false,
     resolveId,

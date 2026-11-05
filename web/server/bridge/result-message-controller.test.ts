@@ -264,7 +264,7 @@ describe("result-message-controller", () => {
 
   // Workspace token totals must survive when history is not loaded (archived
   // sessions, sessions carried over from another coordinator), so the result's
-  // per-model usage is also kept in state, stamped like the history row.
+  // per-model usage is also recorded in the session's token usage ledger.
   it("keeps the result's per-model token usage in session state", () => {
     const session = makeSession();
     const deps = makeDeps();
@@ -286,21 +286,18 @@ describe("result-message-controller", () => {
     expect(session.state.claude_model_usage).toEqual({
       "claude-sonnet-4-5-20250929": { inputTokens: 10, outputTokens: 5, cachedInputTokens: 4 },
     });
-    expect(session.state.token_usage_samples).toEqual([
-      {
-        timestamp: result.timestamp,
-        backend: "claude-sdk",
-        model: "claude-sonnet-4-5-20250929",
-        inputTokens: 10,
-        outputTokens: 5,
-        cachedInputTokens: 4,
-      },
-    ]);
+    expect(session.state.token_usage_ledger?.totals["claude-sonnet-4-5-20250929"]).toMatchObject({
+      totalTokens: 19,
+      inputTokens: 10,
+      outputTokens: 5,
+      cachedInputTokens: 4,
+    });
+    const ledger = session.state.token_usage_ledger;
 
     // A replayed result changes nothing.
     deps.hasResultReplay.mockReturnValue(true);
     handleResultMessage(session, makeResult({ modelUsage: { ...modelUsage } }), deps);
-    expect(session.state.token_usage_samples).toHaveLength(1);
+    expect(session.state.token_usage_ledger).toBe(ledger);
   });
 
   it("stamps a routed answer before accepting Ready from the same assistant row", () => {
