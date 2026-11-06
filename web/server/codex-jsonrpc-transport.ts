@@ -51,6 +51,10 @@ export interface JsonRpcTransportCloseDiagnostics {
   lastOutgoingAt: number | null;
 }
 
+/** Captured at load so the drain loop still yields when a test fakes timers. */
+const realSetImmediate = globalThis.setImmediate;
+const yieldToEventLoop = () => new Promise<void>((resolve) => realSetImmediate(() => resolve()));
+
 export function isPidAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -71,12 +75,20 @@ export class JsonRpcTransport {
   /** Codex requests this side has not answered, when tracking is on (see `trackUnansweredRequests`). */
   private unanswered: Map<number, JsonRpcRequest> | null = null;
   private unansweredChangeCb: ((requests: JsonRpcRequest[]) => void) | null = null;
-  private rawInCbs: Array<(line: string) => void> = [];
-  private rawOutCbs: Array<(data: string) => void> = [];
+  private rawInCbs: Array<(line: string, parsed: JsonRpcMessage | undefined) => void> = [];
+  private rawOutCbs: Array<(data: string, message: JsonRpcMessage) => void> = [];
   private closeCb: (() => void) | null = null;
   private writer: WritableStreamDefaultWriter<Uint8Array>;
   private connected = true;
-  private buffer = "";
+  /**
+   * The unfinished line, kept as the decoded pieces it arrived in and joined
+   * once when its newline arrives. Appending each chunk to one string and
+   * re-splitting it copied and rescanned a large response on every chunk,
+   * which made a 32 MiB `thread/resume` response block the event loop for
+   * seconds.
+   */
+  private partialLine: string[] = [];
+  private partialLineChars = 0;
   private closeContext = "unknown";
   private sessionId: string;
   private recentIncoming: JsonRpcMessageSummary[] = [];
@@ -87,6 +99,8 @@ export class JsonRpcTransport {
   private recorder?: RecorderManager;
   private cwd: string;
   private static readonly RECENT_MESSAGE_SUMMARY_LIMIT = 12;
+  /** Processing time after which a drain of already-buffered output lets other work run. */
+  private static readonly DRAIN_SLICE_MS = 20;
 
   constructor(
     stdin: WritableStream<Uint8Array> | { write(data: Uint8Array): number },
@@ -119,31 +133,23 @@ export class JsonRpcTransport {
     }
     this.writer = writable.getWriter();
 
-    this.onRawIncoming((line) => {
+    this.onRawIncoming((line, parsed) => {
       recorder?.record(sessionId, "in", line, "cli", "codex", cwd);
-      let messageType = "invalid_json";
-      try {
-        messageType = getTrafficMessageType(JSON.parse(line) as Record<string, unknown>);
-      } catch {}
       trafficStats.record({
         sessionId,
         channel: "cli",
         direction: "in",
-        messageType,
+        messageType: parsed ? getTrafficMessageType(parsed) : "invalid_json",
         payloadBytes: Buffer.byteLength(line, "utf-8"),
       });
     });
-    this.onRawOutgoing((data) => {
+    this.onRawOutgoing((data, message) => {
       recorder?.record(sessionId, "out", data.trimEnd(), "cli", "codex", cwd);
-      let messageType = "invalid_json";
-      try {
-        messageType = getTrafficMessageType(JSON.parse(data) as Record<string, unknown>);
-      } catch {}
       trafficStats.record({
         sessionId,
         channel: "cli",
         direction: "out",
-        messageType,
+        messageType: getTrafficMessageType(message),
         payloadBytes: Buffer.byteLength(data, "utf-8"),
       });
     });
@@ -154,15 +160,23 @@ export class JsonRpcTransport {
   private async readStdout(stdout: ReadableStream<Uint8Array>): Promise<void> {
     const reader = stdout.getReader();
     const decoder = new TextDecoder();
+    // Output Codex already wrote arrives without waiting, so a large response
+    // can be drained in one go; let timers, HTTP and WebSocket work in between.
+    let busyMs = 0;
     try {
       while (true) {
         const { done, value } = await reader.read();
         if (done) {
-          this.closeContext = `stdout_eof(buffer=${this.buffer.length})`;
+          this.closeContext = `stdout_eof(buffer=${this.partialLineChars})`;
           break;
         }
-        this.buffer += decoder.decode(value, { stream: true });
-        this.processBuffer();
+        const startedAt = performance.now();
+        this.processChunk(decoder.decode(value, { stream: true }));
+        busyMs += performance.now() - startedAt;
+        if (busyMs >= JsonRpcTransport.DRAIN_SLICE_MS) {
+          busyMs = 0;
+          await yieldToEventLoop();
+        }
       }
     } catch (err) {
       this.closeContext = `stdout_read_error:${err instanceof Error ? err.message : String(err)}`;
@@ -185,26 +199,45 @@ export class JsonRpcTransport {
     }
   }
 
-  private processBuffer(): void {
-    const lines = this.buffer.split("\n");
-    this.buffer = lines.pop() || "";
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      this.recordMessageSummary("in", trimmed);
-      for (const cb of this.rawInCbs) cb(trimmed);
-
-      let msg: JsonRpcMessage;
-      try {
-        msg = JSON.parse(trimmed);
-      } catch {
-        console.warn("[codex-adapter] Failed to parse JSON-RPC:", trimmed.substring(0, 200));
-        continue;
+  /** Handle each line the chunk completes, scanning only the new text for newlines. */
+  private processChunk(text: string): void {
+    let start = 0;
+    let newline = text.indexOf("\n");
+    while (newline !== -1) {
+      let line = text.slice(start, newline);
+      if (this.partialLine.length > 0) {
+        this.partialLine.push(line);
+        line = this.partialLine.join("");
+        this.partialLine = [];
+        this.partialLineChars = 0;
       }
-
-      this.dispatch(msg);
+      this.processLine(line);
+      start = newline + 1;
+      newline = text.indexOf("\n", start);
     }
+    if (start < text.length) {
+      const rest = start === 0 ? text : text.slice(start);
+      this.partialLine.push(rest);
+      this.partialLineChars += rest.length;
+    }
+  }
+
+  private processLine(line: string): void {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    // Parse once; diagnostics and traffic accounting reuse the result.
+    let msg: JsonRpcMessage | undefined;
+    try {
+      const parsed: unknown = JSON.parse(trimmed);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) msg = parsed as JsonRpcMessage;
+    } catch {}
+    this.recordMessageSummary("in", trimmed, msg);
+    for (const cb of this.rawInCbs) cb(trimmed, msg);
+    if (!msg) {
+      console.warn("[codex-adapter] Failed to parse JSON-RPC:", trimmed.substring(0, 200));
+      return;
+    }
+    this.dispatch(msg);
   }
 
   private dispatch(msg: JsonRpcMessage): void {
@@ -273,8 +306,7 @@ export class JsonRpcTransport {
           reject(new Error(`${method} timed out after ${timeoutMs}ms`));
         }, timeoutMs);
       }
-      const request = JSON.stringify({ method, id, params });
-      this.writeRaw(request + "\n").catch((err) => {
+      this.writeMessage({ method, id, params }).catch((err) => {
         if (timeout) clearTimeout(timeout);
         this.pending.delete(id);
         reject(err instanceof Error ? err : new Error(String(err)));
@@ -284,14 +316,12 @@ export class JsonRpcTransport {
   }
 
   async notify(method: string, params: Record<string, unknown> = {}): Promise<void> {
-    const notification = JSON.stringify({ method, params });
-    await this.writeRaw(notification + "\n");
+    await this.writeMessage({ method, params });
   }
 
   async respond(id: number, result: unknown): Promise<void> {
     if (this.unanswered?.delete(id)) this.unansweredChangeCb?.([...this.unanswered.values()]);
-    const response = JSON.stringify({ id, result });
-    await this.writeRaw(response + "\n");
+    await this.writeMessage({ id, result });
   }
 
   /**
@@ -329,11 +359,12 @@ export class JsonRpcTransport {
     return this.connected;
   }
 
-  onRawIncoming(cb: (line: string) => void): void {
+  /** `parsed` is the line's JSON-RPC message, or undefined when it is not a JSON object. */
+  onRawIncoming(cb: (line: string, parsed: JsonRpcMessage | undefined) => void): void {
     this.rawInCbs.push(cb);
   }
 
-  onRawOutgoing(cb: (data: string) => void): void {
+  onRawOutgoing(cb: (data: string, message: JsonRpcMessage) => void): void {
     this.rawOutCbs.push(cb);
   }
 
@@ -357,12 +388,14 @@ export class JsonRpcTransport {
     return this.lastCloseDiagnostics;
   }
 
-  private async writeRaw(data: string): Promise<void> {
+  private async writeMessage(message: JsonRpcMessage): Promise<void> {
     if (!this.connected) {
       throw new Error("Transport closed");
     }
-    this.recordMessageSummary("out", data.trimEnd());
-    for (const cb of this.rawOutCbs) cb(data);
+    const line = JSON.stringify(message);
+    const data = line + "\n";
+    this.recordMessageSummary("out", line, message);
+    for (const cb of this.rawOutCbs) cb(data, message);
     try {
       await this.writer.write(new TextEncoder().encode(data));
     } catch (err) {
@@ -381,7 +414,7 @@ export class JsonRpcTransport {
       sessionId: this.sessionId,
       closedAt,
       closeContext: this.closeContext,
-      bufferedChars: this.buffer.length,
+      bufferedChars: this.partialLineChars,
       pendingRequests: this.summarizePendingRequests(closedAt),
       recentIncoming: [...this.recentIncoming],
       recentOutgoing: [...this.recentOutgoing],
@@ -398,8 +431,8 @@ export class JsonRpcTransport {
     }));
   }
 
-  private recordMessageSummary(direction: "in" | "out", raw: string): void {
-    const summary = summarizeJsonRpcMessage(direction, raw);
+  private recordMessageSummary(direction: "in" | "out", raw: string, parsed: JsonRpcMessage | undefined): void {
+    const summary = summarizeJsonRpcMessage(direction, raw, parsed);
     const target = direction === "in" ? this.recentIncoming : this.recentOutgoing;
     target.push(summary);
     if (target.length > JsonRpcTransport.RECENT_MESSAGE_SUMMARY_LIMIT) target.shift();
@@ -408,15 +441,16 @@ export class JsonRpcTransport {
   }
 }
 
-function summarizeJsonRpcMessage(direction: "in" | "out", raw: string): JsonRpcMessageSummary {
+function summarizeJsonRpcMessage(
+  direction: "in" | "out",
+  raw: string,
+  parsed: JsonRpcMessage | undefined,
+): JsonRpcMessageSummary {
   const bytes = Buffer.byteLength(raw, "utf-8");
-  try {
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const method = typeof parsed.method === "string" ? parsed.method : null;
-    const id = typeof parsed.id === "number" ? parsed.id : null;
-    const kind: JsonRpcMessageSummary["kind"] = method ? (id !== null ? "request" : "notification") : "response";
-    return { direction, ts: Date.now(), bytes, method, id, kind };
-  } catch {
-    return { direction, ts: Date.now(), bytes, method: null, id: null, kind: "invalid_json" };
-  }
+  if (!parsed) return { direction, ts: Date.now(), bytes, method: null, id: null, kind: "invalid_json" };
+  const record = parsed as unknown as Record<string, unknown>;
+  const method = typeof record.method === "string" ? record.method : null;
+  const id = typeof record.id === "number" ? record.id : null;
+  const kind: JsonRpcMessageSummary["kind"] = method ? (id !== null ? "request" : "notification") : "response";
+  return { direction, ts: Date.now(), bytes, method, id, kind };
 }
