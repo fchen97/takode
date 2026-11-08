@@ -6,6 +6,7 @@ import {
   verifyCleanupBaseBranch,
 } from "../auxiliary-worktrees.js";
 import { prepareWorktreeSessionArtifacts } from "../cli-launcher-worktree.js";
+import { GIT_WORKTREE_ADD_TIMEOUT } from "../constants.js";
 import { listDirectories, listFolderEntries } from "../directory-listing.js";
 import { deliverMcpOAuthCallback } from "../mcp-oauth-callback.js";
 import { readCommitDetails, readRangeFileDiff } from "../git-commit-reader.js";
@@ -100,6 +101,13 @@ export type HostOperationName = keyof HostOperations;
 
 /** Git and worktree operations can take a while on a large repo. */
 const OPERATION_TIMEOUT_MS = 120_000;
+/** Operations that create a checkout wait for its longer limit, plus time for their other Git steps. */
+const CHECKOUT_OPERATION_TIMEOUT_MS = GIT_WORKTREE_ADD_TIMEOUT + OPERATION_TIMEOUT_MS;
+const CHECKOUT_OPERATIONS: ReadonlySet<HostOperationName> = new Set([
+  "ensureWorktree",
+  "prepareTrackCheckout",
+  "recreateSessionCheckout",
+]);
 
 /** Run an operation on the session's machine: the remote host `hostId`, or this one when absent. */
 export async function onMachine<K extends HostOperationName>(
@@ -112,7 +120,8 @@ export async function onMachine<K extends HostOperationName>(
     const run = operations[name] as unknown as (...input: Parameters<HostOperations[K]>) => Promise<Result>;
     return run(...args);
   }
-  const response = await requestOnHost(hostId, { kind: "operation", name, args }, OPERATION_TIMEOUT_MS);
+  const timeoutMs = CHECKOUT_OPERATIONS.has(name) ? CHECKOUT_OPERATION_TIMEOUT_MS : OPERATION_TIMEOUT_MS;
+  const response = await requestOnHost(hostId, { kind: "operation", name, args }, timeoutMs);
   return response.result as Result;
 }
 

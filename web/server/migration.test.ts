@@ -10,6 +10,7 @@ import {
   cwdToProjectDir,
   migrateClaudeProjectDir,
 } from "./migration.js";
+import { GIT_WORKTREE_ADD_TIMEOUT } from "./constants.js";
 import * as gitUtils from "./git-utils.js";
 import { configureMachineSettings } from "./remote-host/machine-settings.js";
 
@@ -371,6 +372,8 @@ describe("recreateWorktreeIfMissing", () => {
       );
       expect(worktreeAddCmd?.[0]).toContain("jiayi-wt-8153");
       expect(worktreeAddCmd?.[0]).not.toContain("-b");
+      // Recreating the checkout gets the longer limit for writing a whole repo.
+      expect(worktreeAddCmd?.[3]).toEqual({ timeout: GIT_WORKTREE_ADD_TIMEOUT });
 
       // Should have updated launcher with the original branch
       expect(updateWorktree).toHaveBeenCalledWith("test-session", {

@@ -4,7 +4,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { access, mkdir } from "node:fs/promises";
 import { join, basename, resolve } from "node:path";
 import { homedir } from "node:os";
-import { GIT_CMD_TIMEOUT, SERVER_GIT_CMD } from "./constants.js";
+import { GIT_CMD_TIMEOUT, GIT_WORKTREE_ADD_TIMEOUT, SERVER_GIT_CMD } from "./constants.js";
 import { captureCreatedWorktreeBranch, type CreatedWorktreeBranch } from "./worktree-branch-retirement.js";
 import type { Machine } from "./remote-host/session-machine.js";
 
@@ -78,12 +78,12 @@ function findUniquePath(basePath: string): string {
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-function git(cmd: string, cwd: string): string {
+function git(cmd: string, cwd: string, timeout = GIT_CMD_TIMEOUT): string {
   return execSync(`${SERVER_GIT_CMD} ${cmd}`, {
     // sync-ok: session setup, not called during message handling
     cwd,
     encoding: "utf-8",
-    timeout: GIT_CMD_TIMEOUT,
+    timeout,
     stdio: ["pipe", "pipe", "pipe"],
   }).trim();
 }
@@ -98,15 +98,24 @@ function gitSafe(cmd: string, cwd: string): string | null {
 
 // ─── Async helpers (non-blocking — for hot paths) ────────────────────────────
 
-/** Run a Git command in `cwd`, on another machine when one is given (see `session-machine.ts`). */
-export async function gitAsync(cmd: string, cwd: string, machine?: Machine): Promise<string> {
+/**
+ * Run a Git command in `cwd`, on another machine when one is given (see `session-machine.ts`).
+ * It is stopped after `GIT_CMD_TIMEOUT` unless `options.timeout` gives another limit.
+ */
+export async function gitAsync(
+  cmd: string,
+  cwd: string,
+  machine?: Machine,
+  options?: { timeout?: number },
+): Promise<string> {
+  const timeout = options?.timeout ?? GIT_CMD_TIMEOUT;
   if (machine) {
-    return (await machine.exec(`${SERVER_GIT_CMD} ${cmd}`, { cwd, timeout: GIT_CMD_TIMEOUT })).stdout.trim();
+    return (await machine.exec(`${SERVER_GIT_CMD} ${cmd}`, { cwd, timeout })).stdout.trim();
   }
   const { stdout } = await execPromise(`${SERVER_GIT_CMD} ${cmd}`, {
     cwd,
     encoding: "utf-8",
-    timeout: GIT_CMD_TIMEOUT,
+    timeout,
   });
   return stdout.trim();
 }
@@ -564,7 +573,7 @@ export function ensureWorktree(
   const createWithUniqueBranch = (commitish: string, isNew = false): WorktreeCreateResult => {
     const uniqueBranch = generateUniqueWorktreeBranch(repoRoot, branchName);
     const targetPath = worktreeDir(repoName, uniqueBranch);
-    git(`worktree add -b ${uniqueBranch} "${targetPath}" ${commitish}`, repoRoot);
+    git(`worktree add -b ${uniqueBranch} "${targetPath}" ${commitish}`, repoRoot, GIT_WORKTREE_ADD_TIMEOUT);
     return { worktreePath: targetPath, branch: branchName, actualBranch: uniqueBranch, isNew };
   };
 
@@ -622,7 +631,9 @@ export async function ensureWorktreeAsync(
   const createWithUniqueBranch = async (commitish: string, isNew = false): Promise<WorktreeCreateResult> => {
     const uniqueBranch = await generateUniqueWorktreeBranchAsync(repoRoot, branchName);
     const targetPath = worktreeDir(repoName, uniqueBranch, root);
-    await gitAsync(`worktree add -b ${uniqueBranch} "${targetPath}" ${commitish}`, repoRoot);
+    await gitAsync(`worktree add -b ${uniqueBranch} "${targetPath}" ${commitish}`, repoRoot, undefined, {
+      timeout: GIT_WORKTREE_ADD_TIMEOUT,
+    });
     const createdBranch = await captureCreatedWorktreeBranch(targetPath, uniqueBranch);
     return { worktreePath: targetPath, branch: branchName, actualBranch: uniqueBranch, isNew, createdBranch };
   };

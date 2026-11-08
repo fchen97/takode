@@ -15,6 +15,7 @@ import { realpath } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { homedir, hostname } from "node:os";
 import { spawn } from "node:child_process";
+import { GIT_WORKTREE_ADD_TIMEOUT } from "./constants.js";
 import * as gitUtils from "./git-utils.js";
 import { onMachine } from "./remote-host/host-operations.js";
 import { machineFor } from "./remote-host/session-machine.js";
@@ -596,7 +597,9 @@ export async function recreateSessionCheckout(input: {
     if (ownBranch) {
       const targetPath = gitUtils.worktreeDir(basename(repoRoot), actualBranch, input.worktreeRoot);
       try {
-        await gitUtils.gitAsync(`worktree add "${targetPath}" "${actualBranch}"`, repoRoot);
+        await gitUtils.gitAsync(`worktree add "${targetPath}" "${actualBranch}"`, repoRoot, undefined, {
+          timeout: GIT_WORKTREE_ADD_TIMEOUT,
+        });
         migrateClaudeProjectDir(input.oldCwd, targetPath);
         return {
           worktreePath: targetPath,

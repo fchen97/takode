@@ -1,6 +1,7 @@
 import { access } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
+import { GIT_WORKTREE_ADD_TIMEOUT } from "./constants.js";
 import { gitAsync, gitSafeAsync, listWorktreesAsync } from "./git-utils.js";
 
 /**
@@ -70,18 +71,17 @@ export async function prepareTrackCheckout(input: {
   ) {
     throw new Error(`${checkoutPath} already exists; remove it or choose another track name`);
   }
+  const addCheckout = (args: string) =>
+    gitAsync(`worktree add ${args}`, repoRoot, undefined, { timeout: GIT_WORKTREE_ADD_TIMEOUT });
   const has = (ref: string) => gitSafeAsync(`rev-parse --verify --quiet ${quote(ref)}`, repoRoot).then(Boolean);
   if (await has(`refs/heads/${branch}`)) {
-    await gitAsync(`worktree add ${quote(checkoutPath)} ${quote(branch)}`, repoRoot);
+    await addCheckout(`${quote(checkoutPath)} ${quote(branch)}`);
   } else if (await has(`refs/remotes/origin/${branch}`)) {
-    await gitAsync(
-      `worktree add --track -b ${quote(branch)} ${quote(checkoutPath)} ${quote(`origin/${branch}`)}`,
-      repoRoot,
-    );
+    await addCheckout(`--track -b ${quote(branch)} ${quote(checkoutPath)} ${quote(`origin/${branch}`)}`);
   } else if (input.create) {
     const start = (await has(`refs/remotes/origin/${follows}`)) ? `origin/${follows}` : follows;
     if (!(await has(start))) throw new Error(`The followed branch ${follows} does not exist`);
-    await gitAsync(`worktree add -b ${quote(branch)} ${quote(checkoutPath)} ${quote(start)}`, repoRoot);
+    await addCheckout(`-b ${quote(branch)} ${quote(checkoutPath)} ${quote(start)}`);
   } else {
     throw new Error(
       `Branch ${branch} exists neither in ${repoRoot} nor on origin; add --create to start it from ${follows}`,
