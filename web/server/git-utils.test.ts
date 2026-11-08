@@ -1,4 +1,5 @@
 import { vi, describe, it, expect, beforeEach } from "vitest";
+import { GIT_CMD_TIMEOUT, GIT_WORKTREE_ADD_TIMEOUT } from "./constants.js";
 import { captureCreatedWorktreeBranch } from "./worktree-branch-retirement.js";
 
 vi.mock("./worktree-branch-retirement.js", () => ({
@@ -490,6 +491,11 @@ describe("ensureWorktree", () => {
     const addCall = mockExecSync.mock.calls.find((c: unknown[]) => (c[0] as string).includes("worktree add -b"));
     expect(addCall).toBeDefined();
     expect(addCall![0] as string).toMatch(/feat\/local-wt-\d{4}/);
+    // Writing a large repo's files can outlast the usual Git limit, so the
+    // checkout gets its own longer one while the other commands keep theirs.
+    expect(addCall![1]).toMatchObject({ timeout: GIT_WORKTREE_ADD_TIMEOUT });
+    const otherCall = mockExecSync.mock.calls.find((c: unknown[]) => !(c[0] as string).includes("worktree add"));
+    expect(otherCall![1]).toMatchObject({ timeout: GIT_CMD_TIMEOUT });
   });
 
   it("creates unique -wt- branch from remote", () => {
@@ -771,6 +777,11 @@ describe("ensureWorktreeAsync", () => {
     }
     const addCall = mockExecCb.mock.calls.find((c: unknown[]) => (c[0] as string).includes("worktree add -b"));
     expect(addCall?.[0]).toMatch(/feat\/local-wt-\d{4}/);
+    // Only the checkout itself gets the longer limit (ten minutes by default).
+    expect(GIT_WORKTREE_ADD_TIMEOUT).toBeGreaterThanOrEqual(600_000);
+    expect(addCall?.[1]).toMatchObject({ timeout: GIT_WORKTREE_ADD_TIMEOUT });
+    const otherCall = mockExecCb.mock.calls.find((c: unknown[]) => !(c[0] as string).includes("worktree add"));
+    expect(otherCall?.[1]).toMatchObject({ timeout: GIT_CMD_TIMEOUT });
   });
 
   it("creates branch-tracking worktree from an existing worktree when forceNew=true", async () => {

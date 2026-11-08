@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { access, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { GIT_WORKTREE_ADD_TIMEOUT } from "../constants.js";
 import { FakeHostLink } from "../test-fixtures/fake-host-link.js";
 import { prepareWorktreeForSessionCreate } from "../routes/session-worktree-create.js";
 import { HostAgent } from "./host-agent.js";
@@ -95,6 +96,25 @@ describe("host operations", () => {
     });
     expect(await onMachine(hostId, "removeWorktreeCheckout", target, { force: true })).toMatchObject({ cleaned: true });
     await expect(access(checkout)).rejects.toThrow();
+  });
+
+  // Creating a checkout of a large repo can take minutes on the host, so the
+  // coordinator waits past the host's longer checkout limit for operations that
+  // create one, and keeps the shorter wait for everything else.
+  it("waits longer for operations that create a checkout", async () => {
+    const request = vi.spyOn(manager, "request");
+    await onMachine(hostId, "repoInfo", checkout);
+    const result = await onMachine(hostId, "ensureWorktree", repo, "main", {
+      forceNew: true,
+      worktreeRoot: join(dir, "worktrees"),
+    });
+    expect(git(result.worktreePath, "rev-parse", "--abbrev-ref", "HEAD")).toBe(result.actualBranch);
+
+    const waits = request.mock.calls.map(([, sent, timeoutMs]) => [(sent as { name?: string }).name, timeoutMs]);
+    expect(waits).toEqual([
+      ["repoInfo", 120_000],
+      ["ensureWorktree", GIT_WORKTREE_ADD_TIMEOUT + 120_000],
+    ]);
   });
 
   // The host runs only the named operations, never an arbitrary function.

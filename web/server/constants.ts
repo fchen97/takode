@@ -12,4 +12,6 @@ export const QUEST_MACHINE_STAMPS_MARKER = "machine-stamps.json";
 /** Written in a memory repo's `.git` once its past notes carry machine stamps. */
 export const MEMORY_MACHINE_STAMPS_MARKER = "takode-machine-stamps.json";
 export const GIT_CMD_TIMEOUT = Number(process.env.COMPANION_GIT_TIMEOUT) || 60_000;
+/** `git worktree add` writes every file of the repo, which takes minutes for a large one on a slow disk. */
+export const GIT_WORKTREE_ADD_TIMEOUT = Math.max(GIT_CMD_TIMEOUT, 600_000);
 export const SERVER_GIT_CMD = "git --no-optional-locks -c core.fsmonitor=false";
