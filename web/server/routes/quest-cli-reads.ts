@@ -1,6 +1,7 @@
 import type { Hono } from "hono";
 import { listQuests } from "../quest-store.js";
 import { applyQuestListFilters } from "../quest-list-filters.js";
+import { summarizeQuestForList } from "../quest-text-limits.js";
 import { grepQuests, type QuestGrepResponse } from "../quest-grep.js";
 import type { QuestmasterTask } from "../quest-types.js";
 import { getQuestOwner, sameQuestOwner, type QuestOwnerRef } from "../../shared/quest-owner.js";
@@ -24,7 +25,9 @@ export function registerQuestCliReadRoutes(api: Hono): void {
       text: query("text"),
       verification: query("verification"),
     });
-    return c.json(owner ? quests.filter((quest) => sameQuestOwner(getQuestOwner(quest), owner)) : quests);
+    const listed = owner ? quests.filter((quest) => sameQuestOwner(getQuestOwner(quest), owner)) : quests;
+    // Note summaries, not full note bodies: one quest holding a huge note must not make every list huge.
+    return c.json(listed.map((quest) => summarizeQuestForList(quest)));
   });
 
   api.get("/quests/_grep", async (c) => {

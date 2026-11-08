@@ -4,6 +4,7 @@ import { hasQuestReviewMetadata, isQuestReviewInboxUnread } from "./quest-types.
 import { prepareSearchQuery, type PreparedSearchQuery, tokenizeSearchText } from "../shared/search-utils.js";
 import { questRelationshipSearchText } from "./quest-relationships.js";
 import { liveQuestFeedbackEntries } from "../shared/quest-feedback.js";
+import { QUEST_LIST_TEXT_CHARS, shortenQuestListText } from "./quest-text-limits.js";
 import {
   compactPhaseDocumentationGroups,
   phaseDocumentationPreview,
@@ -246,7 +247,7 @@ export function buildQuestListPreview(quest: QuestmasterTask): QuestListPreview 
           key: group.key,
           label: group.displayLabel,
           ...(group.metaLabel ? { metaLabel: group.metaLabel } : {}),
-          text: phaseDocumentationPreview(latestEntry),
+          text: shortenQuestListText(phaseDocumentationPreview(latestEntry), QUEST_LIST_TEXT_CHARS, quest.questId),
         },
       ];
     },

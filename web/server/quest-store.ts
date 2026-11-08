@@ -44,6 +44,7 @@ import {
 } from "./quest-store-dir.js";
 import { activateQuestDir, migrateSingleFileQuestStore, RETIRED_STORE_SUFFIX } from "./quest-store-migration.js";
 import { normalizeLiveQuest } from "./quest-store-normalize.js";
+import { assertQuestTextWithinLimit } from "./quest-text-limits.js";
 import {
   MAX_QUEST_CODE_COMMIT_EVIDENCE_REPLACEMENT_COMMITS,
   MAX_QUEST_CODE_COMMIT_EVIDENCE_REPLACEMENT_REASON_LENGTH,
@@ -223,6 +224,8 @@ async function mutateLiveQuestStore<T>(
     const current = await writableStore();
     const { store, result, write = true } = await fn(current);
     if (write) {
+      // Before anything is written, so a refused change leaves the store and its backups untouched.
+      assertQuestTextWithinLimit(current.quests, store.quests);
       await recordQuestStoreMutationBackup(backupView(current), backupView(store));
       await writeQuestDirChanges(QUESTS_DIR, current, store);
     }
